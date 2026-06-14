@@ -1,11 +1,3 @@
-mod app;
-mod config;
-mod git;
-mod gui;
-mod model;
-mod os;
-mod pager;
-
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -68,16 +60,8 @@ fn main() {
         .or(cli.work_tree)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    match app::App::new(repo_path, cli.debug) {
-        Ok(app) => {
-            if let Err(e) = app.run() {
-                eprintln!("Error: {:#}", e);
-                std::process::exit(1);
-            }
-        }
-        Err(e) => {
-            eprintln!("Error: {:#}", e);
-            std::process::exit(1);
-        }
+    if let Err(e) = lazygitrs::run(repo_path, cli.debug) {
+        eprintln!("Error: {:#}", e);
+        std::process::exit(1);
     }
 }

@@ -95,6 +95,12 @@ pub struct DiffModeState {
     pub file_search_textarea: Option<tui_textarea::TextArea<'static>>,
 }
 
+impl Default for DiffModeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiffModeState {
     pub fn new() -> Self {
         Self {

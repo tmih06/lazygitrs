@@ -519,6 +519,16 @@ impl Gui {
     pub fn run(&mut self) -> Result<()> {
         let (mut terminal, keyboard_enhanced) = setup_terminal()?;
 
+        // RAII safety net: restore the terminal on EVERY way out of this
+        // function — the `terminal.size()?` early return below, an `Err`
+        // bubbling out of `main_loop`, and (critically) a panic unwinding
+        // through `main_loop`. When lazygitrs is embedded as a library the
+        // binary's panic hook is NOT installed, so without this guard a panic
+        // would leave the host's terminal in raw mode + alt screen + mouse
+        // capture. The guard writes restore sequences straight to stdout, so it
+        // never needs to borrow `terminal` (which `main_loop` borrows `&mut`).
+        let _restore_guard = TerminalGuard { keyboard_enhanced };
+
         // Sync layout dimensions with actual terminal size so mouse handling
         // uses the correct geometry from the very first frame.
         let size = terminal.size()?;
@@ -526,6 +536,14 @@ impl Gui {
 
         let result = self.main_loop(&mut terminal);
 
+        // Clean-path restore: this does the richer teardown (drains pending
+        // input events + flushes the ratatui backend) that is deliberately kept
+        // out of the guard's `Drop`. It is safe to run in addition to
+        // `_restore_guard` because every crossterm command involved is
+        // idempotent: on a normal exit the terminal is restored once
+        // meaningfully here and the guard's later `Drop` is a harmless no-op;
+        // on early-return / panic paths this line is skipped and the guard is
+        // what restores.
         restore_terminal(&mut terminal, keyboard_enhanced)?;
         result
     }
@@ -7140,6 +7158,46 @@ fn matches_key(key: KeyEvent, binding: &str) -> bool {
 
 fn rect_contains(r: ratatui::layout::Rect, col: u16, row: u16) -> bool {
     col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+}
+
+/// RAII guard that restores the terminal on drop, covering every exit path of
+/// [`Gui::run`] — including early `?` returns and panic-unwind, where the
+/// explicit [`restore_terminal`] call is skipped.
+///
+/// It intentionally writes the restore sequences directly to
+/// `std::io::stdout()` (mirroring the binary's panic hook) instead of borrowing
+/// the ratatui [`Term`], because `main_loop` holds a `&mut` borrow of the
+/// terminal for this guard's entire lifetime. The commands undo exactly what
+/// [`setup_terminal`] enables and mirror [`restore_terminal`]; they are all
+/// idempotent, so running them again after a clean-path `restore_terminal` is
+/// harmless.
+///
+/// EMBED-SAFE: this guard only resets terminal modes. It installs no panic
+/// hook and never calls `std::process::exit`, so it stays correct when `run()`
+/// is invoked multiple times in one host process.
+struct TerminalGuard {
+    keyboard_enhanced: bool,
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        // `Drop` must never panic, so every fallible call is swallowed with
+        // `let _ = ...`. Writing to a fresh `io::stdout()` handle keeps this
+        // independent of the `Term`'s outstanding mutable borrow.
+        let mut stdout = io::stdout();
+        if self.keyboard_enhanced {
+            let _ = execute!(stdout, crossterm::event::PopKeyboardEnhancementFlags);
+        }
+        let _ = execute!(
+            stdout,
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
+            crossterm::event::DisableBracketedPaste,
+            cursor::Show,
+            LeaveAlternateScreen
+        );
+        let _ = terminal::disable_raw_mode();
+    }
 }
 
 fn setup_terminal() -> Result<(Term, bool)> {

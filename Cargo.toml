@@ -6,6 +6,14 @@ description = "A faster, memory-safe, more ergonomic slopfork of lazygit"
 repository = "https://github.com/blankeos/lazygitrs"
 license = "MIT"
 
+[lib]
+name = "lazygitrs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lazygitrs"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

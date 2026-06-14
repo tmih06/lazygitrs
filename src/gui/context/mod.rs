@@ -165,6 +165,12 @@ pub struct ContextManager {
     pub viewport_manually_scrolled: bool,
 }
 
+impl Default for ContextManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextManager {
     pub fn new() -> Self {
         let mut selections = std::collections::HashMap::new();

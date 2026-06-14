@@ -71,6 +71,12 @@ pub struct RebaseModeState {
     pub in_progress_dismissed: bool,
 }
 
+impl Default for RebaseModeState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RebaseModeState {
     pub fn new() -> Self {
         Self {
