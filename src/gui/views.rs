@@ -24,6 +24,7 @@ use super::modes::file_explorer::FileExplorerState;
 use super::popup::{CommitInputFocus, PopupState};
 use super::presentation;
 
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     frame: &mut Frame,
     model: &Model,
@@ -1246,63 +1247,6 @@ fn clamped_popup_height(line_count: usize, fixed_rows: u16, area_height: u16) ->
     line_rows.saturating_add(fixed_rows).min(area_height)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{command_log_geometry, render_popup};
-    use crate::config::Theme;
-    use crate::gui::popup::{MessageKind, PopupState};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::layout::Rect;
-
-    #[test]
-    fn command_log_is_hidden_when_main_panel_is_absent() {
-        assert_eq!(command_log_geometry(Rect::default(), 1), None);
-    }
-
-    #[test]
-    fn command_log_visible_lines_are_clamped_to_short_main_panel() {
-        let (rect, visible_lines) =
-            command_log_geometry(Rect::new(10, 4, 80, 2), 5).expect("log should fit");
-
-        assert_eq!(visible_lines, 1);
-        assert_eq!(rect, Rect::new(40, 4, 50, 3));
-    }
-
-    #[test]
-    fn long_error_message_popup_renders_in_short_terminal() {
-        let backend = TestBackend::new(40, 8);
-        let mut terminal = Terminal::new(backend).expect("test terminal");
-        let message = (0..40)
-            .map(|i| {
-                format!(
-                    "hint: divergent branches need reconciliation before pull can continue ({i})"
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let popup = PopupState::Message {
-            title: "Pull error".to_string(),
-            message,
-            kind: MessageKind::Error,
-        };
-
-        terminal
-            .draw(|frame| {
-                render_popup(
-                    frame,
-                    &popup,
-                    Rect::new(0, 0, 40, 8),
-                    0,
-                    &Theme::default(),
-                    false,
-                    false,
-                );
-            })
-            .expect("long popup message should render without panicking");
-    }
-}
-
 /// Build a window title like " 4 Commit Files (abc1234 feat: some change) ".
 fn build_branch_commits_title<'a>(branch_name: &str, theme: &Theme) -> Line<'a> {
     Line::from(vec![
@@ -1689,6 +1633,7 @@ fn render_worktree_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
 }
 
 /// Render a list using persistent scroll offsets from ContextManager.
+#[allow(clippy::too_many_arguments)]
 fn render_list_ctx(
     frame: &mut Frame,
     rect: Rect,
@@ -1706,6 +1651,7 @@ fn render_list_ctx(
 }
 
 /// Render a list with range selection using persistent scroll offsets from ContextManager.
+#[allow(clippy::too_many_arguments)]
 fn render_list_with_range_ctx(
     frame: &mut Frame,
     rect: Rect,
@@ -1726,6 +1672,7 @@ fn render_list_with_range_ctx(
     ctx_mgr.set_scroll_offset(ctx, so);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_list_with_range_raw(
     frame: &mut Frame,
     rect: Rect,
@@ -1771,7 +1718,7 @@ fn render_list_with_range_raw(
             let idx = i + offset;
             if is_active && idx == selected {
                 item.style(theme.selected_line)
-            } else if is_active && range.map_or(false, |(lo, hi)| idx >= lo && idx <= hi) {
+            } else if is_active && range.is_some_and(|(lo, hi)| idx >= lo && idx <= hi) {
                 item.style(Style::default().bg(theme.selected_bg))
             } else {
                 item
@@ -2285,7 +2232,7 @@ pub fn commit_ai_button_geometry(popup: &PopupState, area: Rect) -> Option<Rect>
     if area.width < 10 || area.height < 6 {
         return None;
     }
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let popup_width = (area.width * 60 / 100).clamp(30, 60).min(area.width);
     if popup_width < 16 {
         return None;
     }
@@ -2318,7 +2265,7 @@ pub fn commit_description_textarea_geometry(popup: &PopupState, area: Rect) -> O
         return None;
     };
 
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let popup_width = (area.width * 60 / 100).clamp(30, 60).min(area.width);
     let ta_height = 16u16.min(area.height);
     let ta_y = (area.height.saturating_sub(ta_height)) / 2;
     let ta_rect = Rect::new(
@@ -2342,7 +2289,7 @@ pub fn commit_description_textarea_geometry(popup: &PopupState, area: Rect) -> O
 
 /// Tooltip rect placed one row above the popup, right-aligned with the button.
 fn commit_ai_tooltip_rect(area: Rect, btn_rect: Rect, tip_w: u16) -> Rect {
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let popup_width = (area.width * 60 / 100).clamp(30, 60).min(area.width);
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let ta_height: u16 = 16u16.min(area.height);
     let ta_y = (area.height.saturating_sub(ta_height)) / 2;
@@ -2379,7 +2326,7 @@ pub fn render_loading_overlay(
         return;
     }
 
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let popup_width = (area.width * 60 / 100).clamp(30, 60).min(area.width);
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let spinner = SPINNER_CHARS[(spinner_frame / 8) % SPINNER_CHARS.len()];
     let height = 8u16;
@@ -2441,7 +2388,7 @@ pub fn render_popup(
     if area.width < 4 || area.height < 4 {
         return;
     }
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let popup_width = (area.width * 60 / 100).clamp(30, 60).min(area.width);
     let x = (area.width.saturating_sub(popup_width)) / 2;
 
     match popup {
@@ -2774,21 +2721,22 @@ pub fn render_popup(
             frame.render_widget(list, popup_rect);
 
             // Show disabled item description only when the selected item is disabled
-            if let Some(selected_item) = items.get(*selected) {
-                if selected_item.action.is_none() && !selected_item.description.is_empty() {
-                    let hint_y = popup_rect.y + popup_rect.height;
-                    if hint_y < area.height {
-                        let hint_text = format!("Disabled: {}", selected_item.description);
-                        let hint_rect = Rect::new(popup_rect.x, hint_y, popup_rect.width, 1);
-                        frame.render_widget(Clear, hint_rect);
-                        frame.render_widget(
-                            Paragraph::new(Span::styled(
-                                hint_text,
-                                Style::default().fg(theme.text_dimmed),
-                            )),
-                            hint_rect,
-                        );
-                    }
+            if let Some(selected_item) = items.get(*selected)
+                && selected_item.action.is_none()
+                && !selected_item.description.is_empty()
+            {
+                let hint_y = popup_rect.y + popup_rect.height;
+                if hint_y < area.height {
+                    let hint_text = format!("Disabled: {}", selected_item.description);
+                    let hint_rect = Rect::new(popup_rect.x, hint_y, popup_rect.width, 1);
+                    frame.render_widget(Clear, hint_rect);
+                    frame.render_widget(
+                        Paragraph::new(Span::styled(
+                            hint_text,
+                            Style::default().fg(theme.text_dimmed),
+                        )),
+                        hint_rect,
+                    );
                 }
             }
         }
@@ -2972,7 +2920,7 @@ pub fn render_popup(
             }
 
             // Sizing: use more of the screen for help
-            let popup_width = (area.width * 70 / 100).min(72).max(36).min(area.width);
+            let popup_width = (area.width * 70 / 100).clamp(36, 72).min(area.width);
             let content_height = display.len().max(1);
             // search bar (1) + separator (1) + content + hint (1) + borders (2)
             let popup_height = (content_height as u16 + 5)
@@ -3011,7 +2959,7 @@ pub fn render_popup(
             );
             let ta_width = inner.width.saturating_sub(prefix_width);
             let ta_rect = Rect::new(inner.x + prefix_width, inner.y, ta_width, 1);
-            frame.render_widget(&*search_textarea, ta_rect);
+            frame.render_widget(search_textarea, ta_rect);
 
             // Separator
             let sep_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
@@ -3249,6 +3197,7 @@ pub fn render_popup(
 use super::popup::ListPickerCore;
 
 /// Shared rendering for searchable list picker popups (RefPicker, ThemePicker, etc.).
+#[allow(clippy::too_many_arguments)]
 fn render_list_picker(
     frame: &mut Frame,
     area: Rect,
@@ -3496,10 +3445,10 @@ fn lookup_or_fetch_stat(
     git: &Arc<GitCommands>,
     hash: &str,
 ) -> Option<CommitStat> {
-    if let Ok(map) = cache.lock() {
-        if let Some(s) = map.get(hash) {
-            return Some(*s);
-        }
+    if let Ok(map) = cache.lock()
+        && let Some(s) = map.get(hash)
+    {
+        return Some(*s);
     }
     // Not cached: schedule a background fetch (once) and return None for now.
     let mut inflight_guard = match inflight.lock() {
@@ -3519,10 +3468,10 @@ fn lookup_or_fetch_stat(
     std::thread::spawn(move || {
         // Only cache on success.  Errors leave the entry absent so a future
         // visit can retry; in-flight guard still prevents same-frame spam.
-        if let Ok(stat) = git.commit_stat(&hash_owned) {
-            if let Ok(mut map) = cache.lock() {
-                map.insert(hash_owned.clone(), stat);
-            }
+        if let Ok(stat) = git.commit_stat(&hash_owned)
+            && let Ok(mut map) = cache.lock()
+        {
+            map.insert(hash_owned.clone(), stat);
         }
         if let Ok(mut set) = inflight.lock() {
             set.remove(&hash_owned);
@@ -3531,6 +3480,7 @@ fn lookup_or_fetch_stat(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_commit_details_panel(
     frame: &mut Frame,
     rect: Rect,
@@ -3565,10 +3515,10 @@ fn lookup_or_fetch_message(
     git: &Arc<GitCommands>,
     hash: &str,
 ) -> Option<String> {
-    if let Ok(map) = cache.lock() {
-        if let Some(m) = map.get(hash) {
-            return Some(m.clone());
-        }
+    if let Ok(map) = cache.lock()
+        && let Some(m) = map.get(hash)
+    {
+        return Some(m.clone());
     }
     let mut inflight_guard = match inflight.lock() {
         Ok(g) => g,
@@ -3585,14 +3535,71 @@ fn lookup_or_fetch_message(
     let git = Arc::clone(git);
     let hash_owned = hash.to_string();
     std::thread::spawn(move || {
-        if let Ok(msg) = git.commit_message_full(&hash_owned) {
-            if let Ok(mut map) = cache.lock() {
-                map.insert(hash_owned.clone(), msg);
-            }
+        if let Ok(msg) = git.commit_message_full(&hash_owned)
+            && let Ok(mut map) = cache.lock()
+        {
+            map.insert(hash_owned.clone(), msg);
         }
         if let Ok(mut set) = inflight.lock() {
             set.remove(&hash_owned);
         }
     });
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{command_log_geometry, render_popup};
+    use crate::config::Theme;
+    use crate::gui::popup::{MessageKind, PopupState};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn command_log_is_hidden_when_main_panel_is_absent() {
+        assert_eq!(command_log_geometry(Rect::default(), 1), None);
+    }
+
+    #[test]
+    fn command_log_visible_lines_are_clamped_to_short_main_panel() {
+        let (rect, visible_lines) =
+            command_log_geometry(Rect::new(10, 4, 80, 2), 5).expect("log should fit");
+
+        assert_eq!(visible_lines, 1);
+        assert_eq!(rect, Rect::new(40, 4, 50, 3));
+    }
+
+    #[test]
+    fn long_error_message_popup_renders_in_short_terminal() {
+        let backend = TestBackend::new(40, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let message = (0..40)
+            .map(|i| {
+                format!(
+                    "hint: divergent branches need reconciliation before pull can continue ({i})"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let popup = PopupState::Message {
+            title: "Pull error".to_string(),
+            message,
+            kind: MessageKind::Error,
+        };
+
+        terminal
+            .draw(|frame| {
+                render_popup(
+                    frame,
+                    &popup,
+                    Rect::new(0, 0, 40, 8),
+                    0,
+                    &Theme::default(),
+                    false,
+                    false,
+                );
+            })
+            .expect("long popup message should render without panicking");
+    }
 }

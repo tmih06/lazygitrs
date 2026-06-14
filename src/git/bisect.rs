@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use super::GitCommands;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct BisectInfo {
     pub started: bool,
@@ -71,6 +72,7 @@ impl GitCommands {
     }
 
     /// Get bisect log output.
+    #[allow(dead_code)]
     pub fn bisect_log(&self) -> Result<String> {
         let result = self.git().args(&["bisect", "log"]).run()?;
         if result.success {
@@ -86,6 +88,7 @@ impl GitCommands {
     }
 
     /// Parse bisect info from the log.
+    #[allow(dead_code)]
     pub fn bisect_info(&self) -> Result<BisectInfo> {
         let started = self.is_bisecting();
         if !started {
@@ -107,10 +110,10 @@ impl GitCommands {
                 if let Some(hash) = line.strip_prefix("# good: ") {
                     good.push(hash.trim().to_string());
                 }
-            } else if line.starts_with("# bad: ") {
-                if let Some(hash) = line.strip_prefix("# bad: ") {
-                    bad.push(hash.trim().to_string());
-                }
+            } else if line.starts_with("# bad: ")
+                && let Some(hash) = line.strip_prefix("# bad: ")
+            {
+                bad.push(hash.trim().to_string());
             }
         }
 

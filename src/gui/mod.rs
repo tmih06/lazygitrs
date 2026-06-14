@@ -113,11 +113,13 @@ pub(crate) struct DiffResult {
     /// Generation counter to discard stale results.
     pub generation: u64,
     /// The diff key this result corresponds to.
+    #[allow(dead_code)]
     pub diff_key: String,
     /// The computed diff data: (filename, old_content, new_content) or None for empty.
     pub payload: DiffPayload,
 }
 
+#[allow(dead_code)]
 pub(crate) enum DiffPayload {
     /// Side-by-side diff from old/new content.
     Content {
@@ -343,7 +345,7 @@ fn synthesize_new_file_diff(filename: &str, content: &str) -> String {
     let mut diff = String::new();
     diff.push_str(&format!("diff --git a/{f} b/{f}\n", f = filename));
     diff.push_str("new file mode 100644\n");
-    diff.push_str(&format!("--- /dev/null\n"));
+    diff.push_str("--- /dev/null\n");
     diff.push_str(&format!("+++ b/{}\n", filename));
     diff.push_str(&format!("@@ -0,0 +1,{} @@\n", count));
     for line in &lines {
@@ -393,10 +395,12 @@ impl Gui {
         // background and streams in as it becomes ready, so the UI can
         // paint immediately and waterfall-display results.
         let git = Arc::new(git);
-        let mut model = Model::default();
-        model.repo_name = git.repo_name();
-        model.head_hash = git.head_hash().unwrap_or_default();
-        model.head_branch_name = git.current_branch_name().unwrap_or_default();
+        let model = Model {
+            repo_name: git.repo_name(),
+            head_hash: git.head_hash().unwrap_or_default(),
+            head_branch_name: git.current_branch_name().unwrap_or_default(),
+            ..Model::default()
+        };
 
         let (initial_load_tx, initial_load_rx) = mpsc::channel();
         git.load_model_streaming(&initial_load_tx);
@@ -803,7 +807,7 @@ impl Gui {
                         self.layout.update_size(w, h);
                         // Re-flow any active commit-message textarea to the new width so
                         // wrapping stays consistent with what the user sees.
-                        let popup_width = (w * 60 / 100).min(60).max(30).min(w);
+                        let popup_width = (w * 60 / 100).clamp(30, 60).min(w);
                         let popup_inner = popup_width.saturating_sub(4) as usize;
                         let config_width = self.config.user_config.git.commit.auto_wrap_width;
                         let effective_width = if config_width > 0 {
@@ -839,10 +843,8 @@ impl Gui {
                                 body_textarea,
                                 body_state,
                                 ..
-                            } => {
-                                if effective_width > 0 {
-                                    body_state.render_into(body_textarea, effective_width);
-                                }
+                            } if effective_width > 0 => {
+                                body_state.render_into(body_textarea, effective_width);
                             }
                             _ => {}
                         }
@@ -953,7 +955,7 @@ impl Gui {
 
             match result.result {
                 Ok(Some(message)) => {
-                    let popup_width = (self.layout.width * 60 / 100).min(60).max(30);
+                    let popup_width = (self.layout.width * 60 / 100).clamp(30, 60);
                     let popup_inner = popup_width.saturating_sub(4) as usize;
                     let config_width = self.config.user_config.git.commit.auto_wrap_width;
                     let wrap = if config_width > 0 {
@@ -1327,21 +1329,20 @@ impl Gui {
         F: FnOnce(&crate::git::GitCommands) -> Result<popup::MenuAsyncResult> + Send + 'static,
     {
         // Restore the menu popup (stashed by execute_menu_action) with loading_index set.
-        if let Some(menu) = self.pending_menu_popup.take() {
-            if let PopupState::Menu {
+        if let Some(menu) = self.pending_menu_popup.take()
+            && let PopupState::Menu {
                 title,
                 items,
                 selected,
                 ..
             } = menu
-            {
-                self.popup = PopupState::Menu {
-                    title,
-                    items,
-                    selected,
-                    loading_index: Some(index),
-                };
-            }
+        {
+            self.popup = PopupState::Menu {
+                title,
+                items,
+                selected,
+                loading_index: Some(index),
+            };
         }
         let git = Arc::clone(&self.git);
         let tx = self.menu_async_tx.clone();
@@ -1899,13 +1900,13 @@ impl Gui {
                                     if gen_counter.load(Ordering::Relaxed) != generation {
                                         return;
                                     }
-                                    if let Ok(diff) = git.diff_commit_file(&hash, name) {
-                                        if !diff.is_empty() {
-                                            if !combined_diff.is_empty() {
-                                                combined_diff.push('\n');
-                                            }
-                                            combined_diff.push_str(&diff);
+                                    if let Ok(diff) = git.diff_commit_file(&hash, name)
+                                        && !diff.is_empty()
+                                    {
+                                        if !combined_diff.is_empty() {
+                                            combined_diff.push('\n');
                                         }
+                                        combined_diff.push_str(&diff);
                                     }
                                 }
                                 let payload = if combined_diff.is_empty() {
@@ -2234,10 +2235,10 @@ impl Gui {
         }
 
         // Patch building mode (<c-p>)
-        if matches_key(key, &keybindings.universal.create_patch_options_menu) {
-            if self.context_mgr.active() == ContextId::Commits || self.patch_building.active {
-                return controller::patch_building::show_patch_menu(self);
-            }
+        if matches_key(key, &keybindings.universal.create_patch_options_menu)
+            && (self.context_mgr.active() == ContextId::Commits || self.patch_building.active)
+        {
+            return controller::patch_building::show_patch_menu(self);
         }
 
         // Help popup (?)
@@ -2521,14 +2522,13 @@ impl Gui {
         if matches_key(key, &keybindings.universal.undo_revert_block) {
             if self.context_mgr.active() == ContextId::Files
                 && !self.diff_view.revert_undo_stack.is_empty()
+                && let Err(err) = self.undo_last_revert_block()
             {
-                if let Err(err) = self.undo_last_revert_block() {
-                    self.popup = PopupState::Message {
-                        title: "Undo revert failed".to_string(),
-                        message: format!("{}", err),
-                        kind: MessageKind::Error,
-                    };
-                }
+                self.popup = PopupState::Message {
+                    title: "Undo revert failed".to_string(),
+                    message: format!("{}", err),
+                    kind: MessageKind::Error,
+                };
             }
             return Ok(());
         }
@@ -2731,8 +2731,7 @@ impl Gui {
             return;
         }
         let popup_width = (self.layout.width * 60 / 100)
-            .min(60)
-            .max(30)
+            .clamp(30, 60)
             .min(self.layout.width);
         let popup_inner = popup_width.saturating_sub(4) as usize;
         let config_width = self.config.user_config.git.commit.auto_wrap_width;
@@ -2847,16 +2846,15 @@ impl Gui {
                 core.search_textarea.insert_str(&cleaned);
                 let new_search = core.search_textarea.lines().join("");
                 let new_lower = new_search.to_lowercase();
-                if !new_lower.is_empty() {
-                    if let Some(idx) = core
+                if !new_lower.is_empty()
+                    && let Some(idx) = core
                         .items
                         .iter()
                         .position(|i| i.label.to_lowercase().contains(&new_lower))
-                    {
-                        core.selected = idx;
-                        self.current_theme_index = idx;
-                        core.scroll_offset = idx;
-                    }
+                {
+                    core.selected = idx;
+                    self.current_theme_index = idx;
+                    core.scroll_offset = idx;
                 }
             }
             _ => {}
@@ -2872,14 +2870,14 @@ impl Gui {
             PopupState::Confirm { .. } => {
                 if key.code == KeyCode::Char('y') || key.code == KeyCode::Enter {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
-                    if let PopupState::Confirm { on_confirm, .. } = popup {
-                        if let Err(e) = on_confirm(self) {
-                            self.popup = PopupState::Message {
-                                title: "Error".to_string(),
-                                message: format!("{}", e),
-                                kind: MessageKind::Error,
-                            };
-                        }
+                    if let PopupState::Confirm { on_confirm, .. } = popup
+                        && let Err(e) = on_confirm(self)
+                    {
+                        self.popup = PopupState::Message {
+                            title: "Error".to_string(),
+                            message: format!("{}", e),
+                            kind: MessageKind::Error,
+                        };
                     }
                 } else {
                     self.popup = PopupState::None;
@@ -2891,7 +2889,7 @@ impl Gui {
             }
             PopupState::Menu {
                 items,
-                selected,
+                selected: _,
                 loading_index,
                 ..
             } => {
@@ -2984,7 +2982,7 @@ impl Gui {
                 else if (is_commit
                     && key.code == KeyCode::Char('s')
                     && key.modifiers.contains(KeyModifiers::CONTROL))
-                    || (is_commit && confirm_focused && key.code == KeyCode::Enter)
+                    || (confirm_focused && key.code == KeyCode::Enter)
                     || (!is_commit && key.code == KeyCode::Enter)
                 {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
@@ -3114,8 +3112,7 @@ impl Gui {
                     {
                         textarea_input(textarea, key);
                         let popup_width = (self.layout.width * 60 / 100)
-                            .min(60)
-                            .max(30)
+                            .clamp(30, 60)
                             .min(self.layout.width);
                         let popup_inner = popup_width.saturating_sub(4) as usize;
                         if *is_commit {
@@ -3416,7 +3413,7 @@ impl Gui {
             }
             PopupState::Checklist {
                 items,
-                selected,
+                selected: _,
                 search,
                 ..
             } => {
@@ -3439,10 +3436,10 @@ impl Gui {
                     .count();
                 match key.code {
                     KeyCode::Down | KeyCode::Char('j') => {
-                        if let PopupState::Checklist { selected, .. } = &mut self.popup {
-                            if visible_count > 0 {
-                                *selected = (*selected + 1).min(visible_count - 1);
-                            }
+                        if let PopupState::Checklist { selected, .. } = &mut self.popup
+                            && visible_count > 0
+                        {
+                            *selected = (*selected + 1).min(visible_count - 1);
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
@@ -3702,14 +3699,14 @@ impl Gui {
                         return Ok(());
                     };
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
-                    if let PopupState::RefPicker { on_confirm, .. } = popup {
-                        if let Err(e) = on_confirm(self, &value) {
-                            self.popup = PopupState::Message {
-                                title: "Error".to_string(),
-                                message: format!("{}", e),
-                                kind: MessageKind::Error,
-                            };
-                        }
+                    if let PopupState::RefPicker { on_confirm, .. } = popup
+                        && let Err(e) = on_confirm(self, &value)
+                    {
+                        self.popup = PopupState::Message {
+                            title: "Error".to_string(),
+                            message: format!("{}", e),
+                            kind: MessageKind::Error,
+                        };
                     }
                     return Ok(());
                 }
@@ -3790,7 +3787,6 @@ impl Gui {
                 KeyCode::Esc => {
                     self.current_theme_index = *original_theme_index;
                     self.popup = PopupState::None;
-                    return;
                 }
                 KeyCode::Enter => {
                     let idx = core.selected;
@@ -3801,7 +3797,6 @@ impl Gui {
                         state.color_theme = Some(ct.id.to_string());
                         let _ = state.save(&self.config.state_path);
                     }
-                    return;
                 }
                 KeyCode::Down => {
                     if total > 0 {
@@ -4922,36 +4917,32 @@ impl Gui {
                 action: Some(Box::new(|gui| {
                     let clipboard_text = read_clipboard();
                     if let Some(mut editor) = gui.pending_commit_popup.take() {
-                        if let Some(text) = clipboard_text {
-                            if !text.is_empty() {
-                                if let PopupState::CommitInput {
-                                    ref mut summary_textarea,
-                                    ref mut body_textarea,
-                                    ref mut body_state,
-                                    ..
-                                } = editor
-                                {
-                                    // Split pasted text: first line → summary, rest → body
-                                    let (summary, body) = match text.find('\n') {
-                                        Some(idx) => {
-                                            let s = text[..idx].to_string();
-                                            let b = text[idx + 1..]
-                                                .trim_start_matches('\n')
-                                                .to_string();
-                                            (s, b)
-                                        }
-                                        None => (text.clone(), String::new()),
-                                    };
-                                    summary_textarea.select_all();
-                                    summary_textarea.cut();
-                                    summary_textarea.insert_str(&summary);
-                                    // Clipboard usually holds an existing commit message that
-                                    // was hard-wrapped — unwrap before loading.
-                                    body_state.set_text(popup::unwrap_commit_body(&body));
-                                    let wrap = gui.commit_body_wrap_width();
-                                    body_state.render_into(body_textarea, wrap);
+                        if let Some(text) = clipboard_text
+                            && !text.is_empty()
+                            && let PopupState::CommitInput {
+                                ref mut summary_textarea,
+                                ref mut body_textarea,
+                                ref mut body_state,
+                                ..
+                            } = editor
+                        {
+                            // Split pasted text: first line → summary, rest → body
+                            let (summary, body) = match text.find('\n') {
+                                Some(idx) => {
+                                    let s = text[..idx].to_string();
+                                    let b = text[idx + 1..].trim_start_matches('\n').to_string();
+                                    (s, b)
                                 }
-                            }
+                                None => (text.clone(), String::new()),
+                            };
+                            summary_textarea.select_all();
+                            summary_textarea.cut();
+                            summary_textarea.insert_str(&summary);
+                            // Clipboard usually holds an existing commit message that
+                            // was hard-wrapped — unwrap before loading.
+                            body_state.set_text(popup::unwrap_commit_body(&body));
+                            let wrap = gui.commit_body_wrap_width();
+                            body_state.render_into(body_textarea, wrap);
                         }
                         gui.popup = editor;
                     }
@@ -5497,7 +5488,7 @@ impl Gui {
                     // Click to select an entry in the help list
                     let area =
                         ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
-                    let popup_width = (area.width * 70 / 100).min(72).max(36);
+                    let popup_width = (area.width * 70 / 100).clamp(36, 72);
                     let content_height = total_rows.max(1);
                     let popup_height = (content_height as u16 + 5)
                         .min(area.height.saturating_sub(4))
@@ -5580,7 +5571,7 @@ impl Gui {
                     // Click to select an item in the list picker
                     let area =
                         ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
-                    let popup_width = (area.width * 60 / 100).min(60).max(30);
+                    let popup_width = (area.width * 60 / 100).clamp(30, 60);
                     let max_popup = (area.height * 60 / 100).max(10);
                     let popup_height = max_popup.min(area.height.saturating_sub(4));
                     let x = (area.width.saturating_sub(popup_width)) / 2;
@@ -5611,9 +5602,8 @@ impl Gui {
                         if has_categories {
                             // Walk through display rows to find which entry was clicked
                             let mut di = 0usize;
-                            let mut ei = 0usize;
                             let mut last_cat = String::new();
-                            for item in core.items.iter() {
+                            for (ei, item) in core.items.iter().enumerate() {
                                 if !item.category.is_empty() && item.category != last_cat {
                                     if di == display_idx {
                                         break; // clicked on header
@@ -5626,7 +5616,6 @@ impl Gui {
                                     break;
                                 }
                                 di += 1;
-                                ei += 1;
                             }
                         } else {
                             let clicked_idx = effective_scroll + row_in_list;
@@ -5665,7 +5654,7 @@ impl Gui {
                     // Click to select a theme
                     let area =
                         ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
-                    let popup_width = (area.width * 60 / 100).min(60).max(30);
+                    let popup_width = (area.width * 60 / 100).clamp(30, 60);
                     let max_popup = (area.height * 60 / 100).max(10);
                     let popup_height = max_popup.min(area.height.saturating_sub(4));
                     let x = (area.width.saturating_sub(popup_width)) / 2;
@@ -5747,17 +5736,17 @@ impl Gui {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(ref mut sel) = self.diff_view.selection {
-                    if sel.dragging {
-                        let (cmin, cmax) = pl.content_range(sel.panel);
-                        // Allow dragging into gutter area of same panel (5 cols before content)
-                        let col_min = cmin.saturating_sub(5);
-                        sel.end_col = mouse.column.max(col_min).min(cmax.saturating_sub(1));
-                        sel.end_row = mouse
-                            .row
-                            .max(pl.inner_y)
-                            .min(pl.inner_end_y.saturating_sub(1));
-                    }
+                if let Some(ref mut sel) = self.diff_view.selection
+                    && sel.dragging
+                {
+                    let (cmin, cmax) = pl.content_range(sel.panel);
+                    // Allow dragging into gutter area of same panel (5 cols before content)
+                    let col_min = cmin.saturating_sub(5);
+                    sel.end_col = mouse.column.max(col_min).min(cmax.saturating_sub(1));
+                    sel.end_row = mouse
+                        .row
+                        .max(pl.inner_y)
+                        .min(pl.inner_end_y.saturating_sub(1));
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -5920,7 +5909,7 @@ impl Gui {
                 MouseEventKind::Down(MouseButton::Left) => {
                     let area =
                         ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
-                    let popup_width = (area.width * 60 / 100).min(60).max(30);
+                    let popup_width = (area.width * 60 / 100).clamp(30, 60);
                     let max_popup = (area.height * 60 / 100).max(10);
                     let popup_height = max_popup.min(area.height.saturating_sub(4));
                     let x = (area.width.saturating_sub(popup_width)) / 2;
@@ -5948,9 +5937,8 @@ impl Gui {
 
                         if has_categories {
                             let mut di = 0usize;
-                            let mut ei = 0usize;
                             let mut last_cat = String::new();
-                            for item in core.items.iter() {
+                            for (ei, item) in core.items.iter().enumerate() {
                                 if !item.category.is_empty() && item.category != last_cat {
                                     if di == display_idx {
                                         break;
@@ -5963,7 +5951,6 @@ impl Gui {
                                     break;
                                 }
                                 di += 1;
-                                ei += 1;
                             }
                         } else {
                             let clicked_idx = effective_scroll + row_in_list;
@@ -6162,13 +6149,13 @@ impl Gui {
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 let pl = DiffPanelLayout::compute(diff_rect, &self.diff_view);
-                if let Some(ref mut sel) = self.diff_view.selection {
-                    if sel.dragging {
-                        let (cmin, cmax) = pl.content_range(sel.panel);
-                        let col_min = cmin.saturating_sub(5);
-                        sel.end_col = col.max(col_min).min(cmax.saturating_sub(1));
-                        sel.end_row = row.max(pl.inner_y).min(pl.inner_end_y.saturating_sub(1));
-                    }
+                if let Some(ref mut sel) = self.diff_view.selection
+                    && sel.dragging
+                {
+                    let (cmin, cmax) = pl.content_range(sel.panel);
+                    let col_min = cmin.saturating_sub(5);
+                    sel.end_col = col.max(col_min).min(cmax.saturating_sub(1));
+                    sel.end_row = row.max(pl.inner_y).min(pl.inner_end_y.saturating_sub(1));
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -6230,10 +6217,8 @@ impl Gui {
                     self.diff_view.scroll_left(4);
                 }
             }
-            MouseEventKind::ScrollRight => {
-                if rect_contains(diff_rect, col, row) {
-                    self.diff_view.scroll_right(4);
-                }
+            MouseEventKind::ScrollRight if rect_contains(diff_rect, col, row) => {
+                self.diff_view.scroll_right(4);
             }
             _ => {}
         }
@@ -6643,22 +6628,19 @@ impl Gui {
         if was_active_in_progress
             && previous_current_hash.is_some()
             && previous_current_hash == current_hash
+            && let Some(selected_hash) = previous_selected_hash
+            && let Some(selected) = self
+                .rebase_mode
+                .entries
+                .iter()
+                .position(|entry| entry.hash == selected_hash)
         {
-            if let Some(selected_hash) = previous_selected_hash {
-                if let Some(selected) = self
-                    .rebase_mode
-                    .entries
-                    .iter()
-                    .position(|entry| entry.hash == selected_hash)
-                {
-                    self.rebase_mode.selected = selected;
-                    let list_len = self.rebase_mode.entries.len() + 1;
-                    let max_scroll = list_len.saturating_sub(self.rebase_mode.visible_height);
-                    self.rebase_mode.scroll = previous_scroll.min(max_scroll);
-                    self.rebase_mode
-                        .ensure_visible(self.rebase_mode.visible_height);
-                }
-            }
+            self.rebase_mode.selected = selected;
+            let list_len = self.rebase_mode.entries.len() + 1;
+            let max_scroll = list_len.saturating_sub(self.rebase_mode.visible_height);
+            self.rebase_mode.scroll = previous_scroll.min(max_scroll);
+            self.rebase_mode
+                .ensure_visible(self.rebase_mode.visible_height);
         }
 
         true
@@ -6671,13 +6653,12 @@ impl Gui {
         model.replace_keeping_file_order(new_model);
 
         // If branch filters are active, reload commits for those branches only.
-        if !self.commit_branch_filter.is_empty() {
-            if let Ok(filtered) = self
+        if !self.commit_branch_filter.is_empty()
+            && let Ok(filtered) = self
                 .git
                 .load_commits_for_branches(&self.commit_branch_filter, DEFAULT_COMMIT_LIMIT)
-            {
-                model.commits = filtered;
-            }
+        {
+            model.commits = filtered;
         }
         self.commit_history_complete = model.commits.len() < DEFAULT_COMMIT_LIMIT;
 
@@ -6697,13 +6678,11 @@ impl Gui {
         if (self.context_mgr.active() == ContextId::BranchCommits
             || self.context_mgr.active() == ContextId::BranchCommitFiles)
             && !self.branch_commits_name.is_empty()
-        {
-            if let Ok(commits) = self
+            && let Ok(commits) = self
                 .git
                 .load_commits_for_branch(&self.branch_commits_name, 300)
-            {
-                model.sub_commits = commits;
-            }
+        {
+            model.sub_commits = commits;
         }
 
         // If we're viewing remote branches (or drilled into commits/files from them), re-load them
@@ -6712,14 +6691,12 @@ impl Gui {
                 || ((self.context_mgr.active() == ContextId::BranchCommits
                     || self.context_mgr.active() == ContextId::BranchCommitFiles)
                     && self.sub_commits_parent_context == ContextId::RemoteBranches))
-        {
-            if let Some(remote) = model
+            && let Some(remote) = model
                 .remotes
                 .iter()
                 .find(|r| r.name == self.remote_branches_name)
-            {
-                model.sub_remote_branches = remote.branches.clone();
-            }
+        {
+            model.sub_remote_branches = remote.branches.clone();
         }
 
         // If we're viewing commit/stash files, re-load them (refresh wipes the model)
@@ -6757,22 +6734,23 @@ impl Gui {
             }
         }
         // If rebase mode was active but the rebase completed, exit and show success.
-        if !is_rebasing && self.rebase_mode.active {
-            if self.rebase_mode.phase == RebasePhase::InProgress {
-                let branch = self.rebase_mode.branch_name.clone();
-                let count = self.rebase_mode.total_count;
-                self.rebase_mode.exit();
-                self.popup = crate::gui::popup::PopupState::Message {
-                    title: "Rebase complete".to_string(),
-                    message: format!(
-                        "Successfully rebased '{}' ({} commit{}).",
-                        branch,
-                        count,
-                        if count == 1 { "" } else { "s" },
-                    ),
-                    kind: crate::gui::popup::MessageKind::Info,
-                };
-            }
+        if !is_rebasing
+            && self.rebase_mode.active
+            && self.rebase_mode.phase == RebasePhase::InProgress
+        {
+            let branch = self.rebase_mode.branch_name.clone();
+            let count = self.rebase_mode.total_count;
+            self.rebase_mode.exit();
+            self.popup = crate::gui::popup::PopupState::Message {
+                title: "Rebase complete".to_string(),
+                message: format!(
+                    "Successfully rebased '{}' ({} commit{}).",
+                    branch,
+                    count,
+                    if count == 1 { "" } else { "s" },
+                ),
+                kind: crate::gui::popup::MessageKind::Info,
+            };
         }
         // Clear the dismissal flag once no rebase is in progress, so the next
         // rebase (or new conflict) can auto-open the InProgress view again.
@@ -6882,8 +6860,7 @@ impl Gui {
     /// geometry and the user's `git.commit.auto_wrap_width` config.
     fn commit_body_wrap_width(&self) -> usize {
         let popup_width = (self.layout.width * 60 / 100)
-            .min(60)
-            .max(30)
+            .clamp(30, 60)
             .min(self.layout.width.max(1));
         let popup_inner = popup_width.saturating_sub(4) as usize;
         let config_width = self.config.user_config.git.commit.auto_wrap_width;

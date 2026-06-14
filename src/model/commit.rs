@@ -1,6 +1,7 @@
 use std::fmt;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Commit {
     pub hash: String,
     pub name: String,
@@ -26,12 +27,14 @@ impl Commit {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_merge(&self) -> bool {
         self.parents.len() > 1
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
 pub enum CommitStatus {
     #[default]
     Pushed,
@@ -58,6 +61,7 @@ impl fmt::Display for CommitStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(dead_code)]
 pub enum Divergence {
     #[default]
     None,

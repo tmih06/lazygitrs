@@ -28,6 +28,7 @@ pub struct RebaseEntry {
     pub short_hash: String,
     pub message: String,
     pub author_name: String,
+    #[allow(dead_code)]
     pub unix_timestamp: i64,
     pub action: RebaseAction,
     /// Status during InProgress phase (Done/Current/Pending).

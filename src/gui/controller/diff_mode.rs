@@ -88,12 +88,12 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     }
 
     // Number keys 1-4 to jump to focus panel
-    if let KeyCode::Char(c @ '1'..='4') = key.code {
-        if let Some(focus) = DiffModeFocus::from_number(c.to_digit(10).unwrap()) {
-            gui.diff_mode.focus = focus;
-            gui.needs_diff_refresh = true;
-            return Ok(());
-        }
+    if let KeyCode::Char(c @ '1'..='4') = key.code
+        && let Some(focus) = DiffModeFocus::from_number(c.to_digit(10).unwrap())
+    {
+        gui.diff_mode.focus = focus;
+        gui.needs_diff_refresh = true;
+        return Ok(());
     }
 
     // Ctrl+S to swap refs
@@ -284,17 +284,16 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                     .diff_mode
                     .tree_nodes
                     .get(gui.diff_mode.diff_files_selected)
+                    && node.is_dir
                 {
-                    if node.is_dir {
-                        let path = node.path.clone();
-                        if gui.diff_mode.collapsed_dirs.contains(&path) {
-                            gui.diff_mode.collapsed_dirs.remove(&path);
-                        } else {
-                            gui.diff_mode.collapsed_dirs.insert(path);
-                        }
-                        update_diff_mode_tree(gui);
-                        return Ok(());
+                    let path = node.path.clone();
+                    if gui.diff_mode.collapsed_dirs.contains(&path) {
+                        gui.diff_mode.collapsed_dirs.remove(&path);
+                    } else {
+                        gui.diff_mode.collapsed_dirs.insert(path);
                     }
+                    update_diff_mode_tree(gui);
+                    return Ok(());
                 }
             }
             gui.diff_mode.focus = DiffModeFocus::DiffExploration;

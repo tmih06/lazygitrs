@@ -27,10 +27,11 @@ pub fn try_handle_key(gui: &mut Gui, key: KeyEvent) -> Result<bool> {
             continue;
         }
 
-        if let Some(expected) = parse_key(&cmd.key) {
-            if key.code == expected.code && key.modifiers == expected.modifiers {
-                return execute_custom_command(gui, cmd).map(|_| true);
-            }
+        if let Some(expected) = parse_key(&cmd.key)
+            && key.code == expected.code
+            && key.modifiers == expected.modifiers
+        {
+            return execute_custom_command(gui, cmd).map(|_| true);
         }
     }
 

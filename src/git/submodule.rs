@@ -6,6 +6,7 @@ use super::GitCommands;
 pub struct Submodule {
     pub name: String,
     pub path: String,
+    #[allow(dead_code)]
     pub url: String,
 }
 

@@ -100,7 +100,7 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
             .collect();
         let mut deferred_cols: Vec<usize> = Vec::new();
         for &c in &closing {
-            deferred_cols.extend(lanes[c].deferred_merges.drain(..));
+            deferred_cols.append(&mut lanes[c].deferred_merges);
             lanes[c].target = None;
         }
 
@@ -160,6 +160,7 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
         cells[commit_col].style_col = commit_col;
 
         // Pipes for every other column, derived from the before/after lane state.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..width {
             if i == commit_col {
                 continue;
@@ -206,15 +207,16 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
             draw_horizontal(&mut cells, commit_col, mc, commit_col);
         }
 
-        while cells.last().map_or(false, Cell::is_empty) {
+        while cells.last().is_some_and(Cell::is_empty) {
             cells.pop();
         }
 
         rows.push(GraphRow { commit_col, cells });
 
-        while lanes.last().map_or(false, |l| {
-            l.target.is_none() && l.deferred_merges.is_empty()
-        }) {
+        while lanes
+            .last()
+            .is_some_and(|l| l.target.is_none() && l.deferred_merges.is_empty())
+        {
             lanes.pop();
         }
     }
@@ -224,6 +226,7 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
 
 /// Mark a horizontal run between two columns and record the connector color on
 /// every cell whose right-extension is part of the run.
+#[allow(clippy::needless_range_loop)]
 fn draw_horizontal(cells: &mut [Cell], from: usize, to: usize, color_col: usize) {
     if from == to {
         return;

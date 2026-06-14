@@ -4,6 +4,7 @@ use crate::gui::Gui;
 use crate::gui::popup::{MenuItem, MessageKind, PopupState};
 
 /// Enter patch building mode from the commits panel.
+#[allow(dead_code)]
 pub fn enter_patch_building(gui: &mut Gui) -> Result<()> {
     let selected = gui.context_mgr.selected_active();
     let model = gui.model.lock().unwrap();
@@ -101,6 +102,7 @@ pub fn show_patch_menu(gui: &mut Gui) -> Result<()> {
 }
 
 /// Toggle the current file in patch building mode.
+#[allow(dead_code)]
 pub fn toggle_file_in_patch(gui: &mut Gui) -> Result<()> {
     if !gui.patch_building.active {
         return Ok(());

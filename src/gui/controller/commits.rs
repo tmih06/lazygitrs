@@ -260,11 +260,11 @@ fn cherry_pick_copy(gui: &mut Gui) -> Result<()> {
     let model = gui.model.lock().unwrap();
     let mut added = 0;
     for i in lo..=hi {
-        if let Some(commit) = model.commits.get(i) {
-            if !gui.cherry_pick_clipboard.contains(&commit.hash) {
-                gui.cherry_pick_clipboard.push(commit.hash.clone());
-                added += 1;
-            }
+        if let Some(commit) = model.commits.get(i)
+            && !gui.cherry_pick_clipboard.contains(&commit.hash)
+        {
+            gui.cherry_pick_clipboard.push(commit.hash.clone());
+            added += 1;
         }
     }
     drop(model);

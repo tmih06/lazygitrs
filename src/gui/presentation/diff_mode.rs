@@ -78,7 +78,7 @@ fn render_selector(
     which: DiffModeFocus,
     theme: &Theme,
 ) {
-    let (is_a, focused, editing, display, number_label) = match which {
+    let (_is_a, focused, editing, display, number_label) = match which {
         DiffModeFocus::SelectorA => (
             true,
             state.focus == DiffModeFocus::SelectorA,
@@ -117,7 +117,7 @@ fn render_selector(
         if let Some(ref ta) = state.textarea {
             let inner = block.inner(area);
             frame.render_widget(block, area);
-            frame.render_widget(&*ta, inner);
+            frame.render_widget(ta, inner);
         }
     } else {
         let text = if display.is_empty() {
@@ -354,7 +354,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState, theme
             frame.render_widget(prefix, prefix_rect);
 
             let ta_rect = Rect::new(area.x + prefix_width, area.y, ta_width, 1);
-            frame.render_widget(&*ta, ta_rect);
+            frame.render_widget(ta, ta_rect);
 
             if !match_info.is_empty() {
                 let suffix_rect =

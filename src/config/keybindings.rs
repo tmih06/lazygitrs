@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct KeybindingConfig {
     pub universal: UniversalKeybinding,
     pub status: StatusKeybinding,
@@ -12,20 +13,6 @@ pub struct KeybindingConfig {
     pub stash: StashKeybinding,
     #[serde(rename = "commitMessage")]
     pub commit_message: CommitMessageKeybinding,
-}
-
-impl Default for KeybindingConfig {
-    fn default() -> Self {
-        Self {
-            universal: UniversalKeybinding::default(),
-            status: StatusKeybinding::default(),
-            files: FilesKeybinding::default(),
-            branches: BranchesKeybinding::default(),
-            commits: CommitsKeybinding::default(),
-            stash: StashKeybinding::default(),
-            commit_message: CommitMessageKeybinding::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ pub mod highlight;
 pub mod side_by_side;
 pub mod word_diff;
 
-/// Types shared across the pager module.
+// Types shared across the pager module.
 
 /// Represents a single line in a side-by-side diff.
 #[derive(Debug, Clone)]

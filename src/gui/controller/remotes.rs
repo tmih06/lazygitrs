@@ -50,13 +50,12 @@ fn enter_remote_branches(gui: &mut Gui) -> Result<()> {
         drop(model);
 
         // Put the current branch's remote counterpart first (like local branches)
-        if !head_branch.is_empty() {
-            if let Some(idx) = branches.iter().position(|b| b.name == head_branch) {
-                if idx > 0 {
-                    let head = branches.remove(idx);
-                    branches.insert(0, head);
-                }
-            }
+        if !head_branch.is_empty()
+            && let Some(idx) = branches.iter().position(|b| b.name == head_branch)
+            && idx > 0
+        {
+            let head = branches.remove(idx);
+            branches.insert(0, head);
         }
 
         {

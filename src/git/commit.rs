@@ -374,11 +374,7 @@ fn extract_tags(decoration: &str) -> Vec<String> {
         .split(", ")
         .filter_map(|d| {
             let d = d.trim();
-            if let Some(tag) = d.strip_prefix("tag: ") {
-                Some(tag.to_string())
-            } else {
-                None
-            }
+            d.strip_prefix("tag: ").map(|tag| tag.to_string())
         })
         .collect()
 }

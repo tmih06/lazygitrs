@@ -33,6 +33,7 @@ impl PatchBuildingState {
         self.selected_hunks.clear();
     }
 
+    #[allow(dead_code)]
     pub fn toggle_file(&mut self, file_path: &str) {
         if self.selected_files.contains(file_path) {
             self.selected_files.remove(file_path);

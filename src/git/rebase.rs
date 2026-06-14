@@ -53,6 +53,7 @@ impl RebaseAction {
 impl GitCommands {
     /// Interactive rebase: apply a single action to a specific commit.
     /// Uses GIT_SEQUENCE_EDITOR to non-interactively modify the todo list.
+    #[allow(dead_code)]
     pub fn rebase_interactive_action(&self, commit_hash: &str, action: RebaseAction) -> Result<()> {
         // Find the parent of the target commit for the rebase base
         let parent = self.commit_parent(commit_hash)?;
@@ -366,11 +367,9 @@ impl GitCommands {
         for e in progress.todo_entries.iter_mut() {
             apply(e, &info);
         }
-        if need_onto {
-            if let Some((subject, author, _)) = info.get(&progress.onto_hash) {
-                progress.onto_message = subject.clone();
-                progress.onto_author_name = author.clone();
-            }
+        if need_onto && let Some((subject, author, _)) = info.get(&progress.onto_hash) {
+            progress.onto_message = subject.clone();
+            progress.onto_author_name = author.clone();
         }
     }
 

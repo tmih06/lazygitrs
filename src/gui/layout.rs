@@ -33,6 +33,7 @@ pub struct FrameLayout {
     pub main_panel: Rect,
     pub status_bar: Rect,
     /// Whether portrait (vertical stack) layout is in effect.
+    #[allow(dead_code)]
     pub portrait: bool,
     /// Optional rect for the commit details panel when the active (or last-focused)
     /// context is a commit-listing context and the terminal is big enough.

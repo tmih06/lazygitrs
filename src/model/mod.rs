@@ -23,6 +23,7 @@ use crate::git::submodule::Submodule;
 
 /// Holds all repository data loaded from git.
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct Model {
     pub repo_name: String,
     pub head_hash: String,

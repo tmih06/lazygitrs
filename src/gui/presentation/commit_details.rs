@@ -15,6 +15,7 @@ use crate::model::commit::{Commit, CommitStat, CommitStatus};
 /// `full_message` is the unwrapped commit message (subject + body).  If only
 /// the subject is known (e.g. when we haven't fetched the body yet), the
 /// renderer falls back to `commit.name`.
+#[allow(clippy::too_many_arguments)]
 pub fn render_commit_details(
     frame: &mut Frame,
     rect: Rect,
@@ -115,10 +116,10 @@ pub fn render_commit_details(
     // scrolling past long commit bodies.  Only render when a meaningful stat
     // has been computed (files_changed > 0) — avoids showing "0 Changed Files"
     // while the background fetch is still running or on git errors.
-    if let Some(s) = stat {
-        if s.files_changed > 0 {
-            lines.push(stat_line(s, theme));
-        }
+    if let Some(s) = stat
+        && s.files_changed > 0
+    {
+        lines.push(stat_line(s, theme));
     }
 
     for segment in message.split('\n') {

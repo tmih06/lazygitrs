@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail};
 use super::GitCommands;
 
 /// Represents a parsed hunk from a diff.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DiffHunk {
     pub header: String,
@@ -15,6 +16,7 @@ pub struct DiffHunk {
 
 impl GitCommands {
     /// Parse the diff output into hunks.
+    #[allow(dead_code)]
     pub fn parse_diff_hunks(&self, diff_output: &str) -> Vec<DiffHunk> {
         let mut hunks = Vec::new();
         let mut current_hunk: Option<DiffHunk> = None;
@@ -49,6 +51,7 @@ impl GitCommands {
     }
 
     /// Stage a specific hunk by applying it as a patch.
+    #[allow(dead_code)]
     pub fn stage_hunk(&self, file_path: &str, hunk: &DiffHunk) -> Result<()> {
         let patch = build_patch(file_path, hunk);
         self.git()
@@ -59,6 +62,7 @@ impl GitCommands {
     }
 
     /// Unstage a specific hunk by reverse-applying it as a patch.
+    #[allow(dead_code)]
     pub fn unstage_hunk(&self, file_path: &str, hunk: &DiffHunk) -> Result<()> {
         let patch = build_patch(file_path, hunk);
         self.git()
@@ -69,6 +73,7 @@ impl GitCommands {
     }
 
     /// Get diff for a file and return it split into hunks.
+    #[allow(dead_code)]
     pub fn file_hunks(&self, path: &str, staged: bool) -> Result<Vec<DiffHunk>> {
         let diff = if staged {
             self.diff_file_staged(path)?
@@ -247,6 +252,7 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
     (old_start, old_count, new_start, new_count)
 }
 
+#[allow(dead_code)]
 fn build_patch(file_path: &str, hunk: &DiffHunk) -> String {
     let mut patch = String::new();
     patch.push_str(&format!("--- a/{}\n", file_path));

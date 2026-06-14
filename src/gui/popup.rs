@@ -161,6 +161,7 @@ impl WrapLayout {
         line.raw_start + col.min(line.char_len)
     }
 
+    #[allow(dead_code)]
     pub fn as_textarea_text(&self) -> String {
         self.lines
             .iter()
@@ -185,6 +186,7 @@ impl BodySoftWrap {
         Self { raw, cursor }
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.raw.is_empty()
     }
@@ -211,6 +213,7 @@ impl BodySoftWrap {
         self.raw = raw;
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.raw.clear();
         self.cursor = 0;
@@ -455,6 +458,7 @@ pub enum CommitInputFocus {
     Body,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum PopupState {
     None,
     Confirm {

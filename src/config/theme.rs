@@ -7,6 +7,7 @@ use serde::Deserialize;
 /// Every hardcoded color in the UI should reference a field here so themes
 /// can be swapped at runtime.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Theme {
     // ── Borders & chrome ─────────────────────────────────────────────
     pub active_border: Style,
@@ -161,6 +162,7 @@ impl Default for Theme {
 }
 
 impl Theme {
+    #[allow(dead_code)]
     pub fn from_config(config: &ThemeConfig) -> Self {
         let mut theme = Self::dark();
 
@@ -745,12 +747,11 @@ impl ColorTheme {
                 if file.path().extension().and_then(|e| e.to_str()) != Some("json") {
                     continue;
                 }
-                if let Some(contents) = file.contents_utf8() {
-                    if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(contents) {
-                        if theme_json.id == self.id {
-                            return theme_json.to_theme();
-                        }
-                    }
+                if let Some(contents) = file.contents_utf8()
+                    && let Ok(theme_json) = serde_json::from_str::<ThemeJson>(contents)
+                    && theme_json.id == self.id
+                {
+                    return theme_json.to_theme();
                 }
             }
         }
@@ -786,15 +787,14 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
             if file.path().extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            if let Some(contents) = file.contents_utf8() {
-                if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(contents) {
-                    if seen_ids.insert(theme_json.id.clone()) {
-                        themes.push(ColorTheme {
-                            name: theme_json.name.clone(),
-                            id: theme_json.id.clone(),
-                        });
-                    }
-                }
+            if let Some(contents) = file.contents_utf8()
+                && let Ok(theme_json) = serde_json::from_str::<ThemeJson>(contents)
+                && seen_ids.insert(theme_json.id.clone())
+            {
+                themes.push(ColorTheme {
+                    name: theme_json.name.clone(),
+                    id: theme_json.id.clone(),
+                });
             }
         }
     }
@@ -810,7 +810,7 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
 
     // Sort non-default themes alphabetically by name
     if themes.len() > 1 {
-        themes[1..].sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        themes[1..].sort_by_key(|a| a.name.to_lowercase());
     }
 
     themes
@@ -843,12 +843,11 @@ fn discover_user_themes() -> Option<Vec<(String, String)>> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    if let Ok(contents) = std::fs::read_to_string(&path) {
-                        if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents) {
-                            result.push((theme_json.id.clone(), theme_json.name.clone()));
-                        }
-                    }
+                if path.extension().and_then(|e| e.to_str()) == Some("json")
+                    && let Ok(contents) = std::fs::read_to_string(&path)
+                    && let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents)
+                {
+                    result.push((theme_json.id.clone(), theme_json.name.clone()));
                 }
             }
         }
@@ -869,14 +868,12 @@ fn load_user_theme(id: &str) -> Option<Theme> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                    if let Ok(contents) = std::fs::read_to_string(&path) {
-                        if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents) {
-                            if theme_json.id == id {
-                                return Some(theme_json.to_theme());
-                            }
-                        }
-                    }
+                if path.extension().and_then(|e| e.to_str()) == Some("json")
+                    && let Ok(contents) = std::fs::read_to_string(&path)
+                    && let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents)
+                    && theme_json.id == id
+                {
+                    return Some(theme_json.to_theme());
                 }
             }
         }
@@ -934,6 +931,7 @@ fn parse_hex(s: &str) -> Option<Color> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_color_list(colors: &[String]) -> Option<Color> {
     colors.first().and_then(|s| parse_color(s))
 }

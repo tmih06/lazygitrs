@@ -157,11 +157,7 @@ impl DiffPanelLayout {
             }
         } else {
             let total_chrome = gutter * 2 + divider;
-            let content_w = if inner_w > total_chrome {
-                inner_w - total_chrome
-            } else {
-                0
-            };
+            let content_w = inner_w.saturating_sub(total_chrome);
             let panel_w = content_w / 2;
 
             let old_content_x = inner_x + gutter;
@@ -228,16 +224,11 @@ impl DiffPanelLayout {
 }
 
 /// Which layout the diff body is rendered in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiffViewLayout {
+    #[default]
     SideBySide,
     Unified,
-}
-
-impl Default for DiffViewLayout {
-    fn default() -> Self {
-        Self::SideBySide
-    }
 }
 
 impl DiffViewLayout {
@@ -274,6 +265,7 @@ pub enum DiffSideView {
 
 /// A search match within the diff content, used for n/N navigation.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct DiffSearchMatch {
     /// Index into `DiffViewState::lines`.
     pub line_idx: usize,
@@ -431,7 +423,7 @@ impl DiffViewState {
     /// For multi-file diffs, walks backwards to find the nearest file header.
     pub fn file_at_line(&self, line_idx: usize) -> &str {
         for i in (0..=line_idx).rev() {
-            if let Some(ref header) = self.lines.get(i).and_then(|l| l.file_header.as_ref()) {
+            if let Some(header) = self.lines.get(i).and_then(|l| l.file_header.as_ref()) {
                 return header;
             }
         }
@@ -1038,6 +1030,7 @@ impl DiffViewState {
     /// or pure deletion (no `+` lines). Used to slice a sub-patch out of the
     /// raw unified diff so revert affects only this visual block, not the
     /// surrounding `@@` hunk that may contain other change blocks.
+    #[allow(clippy::type_complexity)]
     pub fn visual_block_line_ranges(
         &self,
         block_idx: usize,
@@ -1056,23 +1049,23 @@ impl DiffViewState {
         let mut old_range: Option<(usize, usize)> = None;
         let mut new_range: Option<(usize, usize)> = None;
         for line in &self.lines[start..end] {
-            if matches!(line.change_type, ChangeType::Delete | ChangeType::Modified) {
-                if let Some((n, _)) = &line.old_line {
-                    let n = *n + old_offset;
-                    old_range = Some(match old_range {
-                        None => (n, n),
-                        Some((lo, hi)) => (lo.min(n), hi.max(n)),
-                    });
-                }
+            if matches!(line.change_type, ChangeType::Delete | ChangeType::Modified)
+                && let Some((n, _)) = &line.old_line
+            {
+                let n = *n + old_offset;
+                old_range = Some(match old_range {
+                    None => (n, n),
+                    Some((lo, hi)) => (lo.min(n), hi.max(n)),
+                });
             }
-            if matches!(line.change_type, ChangeType::Insert | ChangeType::Modified) {
-                if let Some((n, _)) = &line.new_line {
-                    let n = *n + new_offset;
-                    new_range = Some(match new_range {
-                        None => (n, n),
-                        Some((lo, hi)) => (lo.min(n), hi.max(n)),
-                    });
-                }
+            if matches!(line.change_type, ChangeType::Insert | ChangeType::Modified)
+                && let Some((n, _)) = &line.new_line
+            {
+                let n = *n + new_offset;
+                new_range = Some(match new_range {
+                    None => (n, n),
+                    Some((lo, hi)) => (lo.min(n), hi.max(n)),
+                });
             }
         }
         Some((old_range, new_range))
@@ -1384,9 +1377,7 @@ pub fn render_diff(
                         state.horizontal_scroll,
                     );
                 } else {
-                    let fill: String = std::iter::repeat(' ')
-                        .take(content_width as usize)
-                        .collect();
+                    let fill: String = std::iter::repeat_n(' ', content_width as usize).collect();
                     buf_write_str(
                         buf,
                         inner.x + gutter_width,
@@ -1525,7 +1516,7 @@ pub fn render_diff(
                     );
                     if is_insert {
                         let slash: String =
-                            std::iter::repeat('/').take(panel_width as usize).collect();
+                            std::iter::repeat_n('/', panel_width as usize).collect();
                         buf_write_str(
                             buf,
                             inner.x + gutter_width,
@@ -1537,8 +1528,7 @@ pub fn render_diff(
                     } else if let Some(chunk) = left_wrapped.get(chunk_idx) {
                         buf_write_spans(buf, inner.x + gutter_width, y, chunk, panel_width, 0);
                     } else {
-                        let fill: String =
-                            std::iter::repeat(' ').take(panel_width as usize).collect();
+                        let fill: String = std::iter::repeat_n(' ', panel_width as usize).collect();
                         buf_write_str(
                             buf,
                             inner.x + gutter_width,
@@ -1594,9 +1584,8 @@ pub fn render_diff(
                         gutter_width,
                     );
                     if is_delete {
-                        let slash: String = std::iter::repeat('/')
-                            .take(right_content_width as usize)
-                            .collect();
+                        let slash: String =
+                            std::iter::repeat_n('/', right_content_width as usize).collect();
                         buf_write_str(
                             buf,
                             right_content_x,
@@ -1608,9 +1597,8 @@ pub fn render_diff(
                     } else if let Some(chunk) = right_wrapped.get(chunk_idx) {
                         buf_write_spans(buf, right_content_x, y, chunk, right_content_width, 0);
                     } else {
-                        let fill: String = std::iter::repeat(' ')
-                            .take(right_content_width as usize)
-                            .collect();
+                        let fill: String =
+                            std::iter::repeat_n(' ', right_content_width as usize).collect();
                         buf_write_str(
                             buf,
                             right_content_x,
@@ -1632,7 +1620,7 @@ pub fn render_diff(
                 // Left content
                 let left_spans = if is_insert {
                     let slash_fill: String =
-                        std::iter::repeat('/').take(panel_width as usize).collect();
+                        std::iter::repeat_n('/', panel_width as usize).collect();
                     vec![Span::styled(
                         slash_fill,
                         Style::default().fg(theme.diff_line_number).bg(left_bg),
@@ -1704,7 +1692,7 @@ pub fn render_diff(
                 // Right content
                 let right_spans = if is_delete {
                     let slash_fill: String =
-                        std::iter::repeat('/').take(panel_width as usize).collect();
+                        std::iter::repeat_n('/', panel_width as usize).collect();
                     vec![Span::styled(
                         slash_fill,
                         Style::default().fg(theme.diff_line_number).bg(right_bg),
@@ -2035,9 +2023,7 @@ fn render_unified_row(
             buf_write_str(buf, prefix_x, y, " ·", sign_style, PREFIX_WIDTH);
         }
 
-        let fill: String = std::iter::repeat(' ')
-            .take(content_width as usize)
-            .collect();
+        let fill: String = std::iter::repeat_n(' ', content_width as usize).collect();
         buf_write_str(buf, content_x, y, &fill, fill_style, content_width);
         buf_write_spans(
             buf,
@@ -2666,7 +2652,7 @@ pub fn render_diff_search_bar(frame: &mut Frame, area: Rect, state: &DiffViewSta
 
         if let Some(ref ta) = state.search_textarea {
             let ta_rect = Rect::new(bar_rect.x + prefix_width, bar_y, ta_width, 1);
-            frame.render_widget(&*ta, ta_rect);
+            frame.render_widget(ta, ta_rect);
         }
 
         if !match_info.is_empty() {
@@ -2758,10 +2744,10 @@ fn parse_unified_diff(diff: &str) -> (String, String) {
             continue;
         }
 
-        if line.starts_with('-') {
-            old_lines.push(&line[1..]);
-        } else if line.starts_with('+') {
-            new_lines.push(&line[1..]);
+        if let Some(rest) = line.strip_prefix('-') {
+            old_lines.push(rest);
+        } else if let Some(rest) = line.strip_prefix('+') {
+            new_lines.push(rest);
         } else if let Some(ctx) = line.strip_prefix(' ') {
             old_lines.push(ctx);
             new_lines.push(ctx);

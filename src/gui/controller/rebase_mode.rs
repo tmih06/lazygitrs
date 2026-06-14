@@ -310,19 +310,19 @@ fn execute_rebase(gui: &mut Gui) -> Result<()> {
     let base_hash = gui.rebase_mode.base_hash.clone();
 
     // Validate: squash/fixup cannot be the first action
-    if let Some((_, first_action)) = actions.first() {
-        if *first_action == RebaseAction::Squash || *first_action == RebaseAction::Fixup {
-            gui.popup = PopupState::Message {
-                title: "Invalid rebase".to_string(),
-                message: format!(
-                    "Cannot {} the first commit — there is nothing to {} into.",
-                    first_action.as_str(),
-                    first_action.as_str(),
-                ),
-                kind: MessageKind::Error,
-            };
-            return Ok(());
-        }
+    if let Some((_, first_action)) = actions.first()
+        && (*first_action == RebaseAction::Squash || *first_action == RebaseAction::Fixup)
+    {
+        gui.popup = PopupState::Message {
+            title: "Invalid rebase".to_string(),
+            message: format!(
+                "Cannot {} the first commit — there is nothing to {} into.",
+                first_action.as_str(),
+                first_action.as_str(),
+            ),
+            kind: MessageKind::Error,
+        };
+        return Ok(());
     }
 
     // Switch to InProgress phase so refresh() can detect completion

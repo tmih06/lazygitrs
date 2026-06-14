@@ -79,6 +79,7 @@ impl GitCommands {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn unstage_file(&self, path: &str) -> Result<()> {
         self.git()
             .args(&["reset", "HEAD", "--", path])

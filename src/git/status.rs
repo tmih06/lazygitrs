@@ -5,8 +5,11 @@ use crate::os::cmd::CmdResult;
 
 #[derive(Debug)]
 pub struct RepoStatus {
+    #[allow(dead_code)]
     pub branch: String,
+    #[allow(dead_code)]
     pub ahead: usize,
+    #[allow(dead_code)]
     pub behind: usize,
     pub is_rebasing: bool,
     pub is_merging: bool,

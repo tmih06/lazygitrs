@@ -32,17 +32,17 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
     if key.code == KeyCode::Enter {
         if gui.show_commit_file_tree {
             let selected = gui.context_mgr.selected_active();
-            if let Some(node) = gui.commit_file_tree_nodes.get(selected) {
-                if node.is_dir {
-                    let path = node.path.clone();
-                    if gui.commit_files_collapsed_dirs.contains(&path) {
-                        gui.commit_files_collapsed_dirs.remove(&path);
-                    } else {
-                        gui.commit_files_collapsed_dirs.insert(path);
-                    }
-                    update_commit_file_tree_state(gui);
-                    return Ok(());
+            if let Some(node) = gui.commit_file_tree_nodes.get(selected)
+                && node.is_dir
+            {
+                let path = node.path.clone();
+                if gui.commit_files_collapsed_dirs.contains(&path) {
+                    gui.commit_files_collapsed_dirs.remove(&path);
+                } else {
+                    gui.commit_files_collapsed_dirs.insert(path);
                 }
+                update_commit_file_tree_state(gui);
+                return Ok(());
             }
         }
         // Focus the diff panel for the selected file

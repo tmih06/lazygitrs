@@ -31,6 +31,7 @@ impl GitCommands {
     }
 
     /// Get the full staged diff (for AI commit generation).
+    #[allow(dead_code)]
     pub fn diff_staged(&self) -> Result<String> {
         let result = self
             .git()
@@ -83,10 +84,10 @@ impl GitCommands {
                     if let Some(n) = part.split_whitespace().next().and_then(|w| w.parse().ok()) {
                         added = n;
                     }
-                } else if part.contains("deletion") {
-                    if let Some(n) = part.split_whitespace().next().and_then(|w| w.parse().ok()) {
-                        deleted = n;
-                    }
+                } else if part.contains("deletion")
+                    && let Some(n) = part.split_whitespace().next().and_then(|w| w.parse().ok())
+                {
+                    deleted = n;
                 }
             }
             (added, deleted)
@@ -247,6 +248,7 @@ impl GitCommands {
     }
 
     /// Get the staged content of a file.
+    #[allow(dead_code)]
     pub fn file_content_staged(&self, path: &str) -> Result<String> {
         let result = self.git().args(&["show", &format!(":{}", path)]).run()?;
         if result.success {

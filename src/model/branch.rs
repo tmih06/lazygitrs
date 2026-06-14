@@ -10,6 +10,7 @@ pub struct Branch {
 }
 
 impl Branch {
+    #[allow(dead_code)]
     pub fn display_name(&self) -> &str {
         &self.name
     }

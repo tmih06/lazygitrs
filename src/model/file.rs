@@ -1,6 +1,7 @@
 use std::fmt;
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct File {
     pub name: String,
     pub display_name: String,
@@ -15,10 +16,12 @@ pub struct File {
 }
 
 impl File {
+    #[allow(dead_code)]
     pub fn is_tracked(&self) -> bool {
         self.tracked
     }
 
+    #[allow(dead_code)]
     pub fn has_any_changes(&self) -> bool {
         self.has_staged_changes || self.has_unstaged_changes
     }
@@ -50,6 +53,7 @@ impl File {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum FileStatus {
     Untracked,
     Added,

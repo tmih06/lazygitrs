@@ -52,7 +52,7 @@ fn render_commits<'a>(
             };
 
             // Hash — color by push status, overridden to cyan+bold if cherry-picked
-            let is_cherry_picked = cherry_picked.iter().any(|h| *h == commit.hash);
+            let is_cherry_picked = cherry_picked.contains(&commit.hash);
             let hash_style = if is_cherry_picked {
                 Style::default()
                     .fg(theme.accent)
@@ -72,6 +72,7 @@ fn render_commits<'a>(
 
             // Ref decorations (HEAD -> main, origin/main, etc.)
             for r in &commit.refs {
+                #[allow(clippy::if_same_then_else)]
                 let (label, color) = if r.starts_with("HEAD -> ") {
                     (r.clone(), theme.ref_head)
                 } else if r == "HEAD" {

@@ -150,11 +150,12 @@ impl GitCommands {
     /// Git commands are run in parallel using scoped threads since they are
     /// all independent reads against the same repo.
     pub fn load_model(&self) -> Result<Model> {
-        let mut model = Model::default();
-
-        model.repo_name = self.repo_name();
-        model.head_hash = self.head_hash().unwrap_or_default();
-        model.head_branch_name = self.current_branch_name().unwrap_or_default();
+        let mut model = Model {
+            repo_name: self.repo_name(),
+            head_hash: self.head_hash().unwrap_or_default(),
+            head_branch_name: self.current_branch_name().unwrap_or_default(),
+            ..Model::default()
+        };
 
         // Run all independent git loads in parallel.
         std::thread::scope(|s| {
@@ -280,11 +281,13 @@ impl GitCommands {
     }
 
     /// Refresh just the working tree files.
+    #[allow(dead_code)]
     pub fn refresh_files(&self) -> Result<Vec<crate::model::File>> {
         self.load_files()
     }
 
     /// Refresh just branches.
+    #[allow(dead_code)]
     pub fn refresh_branches(&self) -> Result<Vec<crate::model::Branch>> {
         self.load_branches()
     }

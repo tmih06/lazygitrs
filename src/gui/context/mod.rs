@@ -18,6 +18,7 @@ pub enum ContextId {
     BranchCommits,
     BranchCommitFiles,
     RemoteBranches,
+    #[allow(dead_code)]
     Staging,
 }
 
@@ -283,6 +284,7 @@ impl ContextManager {
     }
 
     /// Cycle to previous tab within the current window.
+    #[allow(dead_code)]
     pub fn prev_tab(&mut self) {
         let window = self.active_window();
         let tabs = window.tabs();
@@ -319,6 +321,7 @@ impl ContextManager {
     /// Adjust the scroll offset for a context so that `selected` is visible
     /// within a viewport of `visible_height` rows.  Only scrolls when the
     /// cursor would otherwise be outside the visible window.
+    #[allow(dead_code)]
     pub fn ensure_scroll_visible(&mut self, ctx: ContextId, visible_height: usize) {
         let selected = self.selected(ctx);
         let mut offset = self.scroll_offset(ctx);
