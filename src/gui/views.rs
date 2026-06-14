@@ -20,6 +20,7 @@ use crate::pager::side_by_side::{self, DiffPanel, DiffPanelLayout, DiffViewLayou
 use super::ScreenMode;
 use super::context::{ContextId, ContextManager, SideWindow};
 use super::layout::{self, LayoutState};
+use super::modes::file_explorer::FileExplorerState;
 use super::popup::{CommitInputFocus, PopupState};
 use super::presentation;
 
@@ -36,6 +37,7 @@ pub fn render(
     show_file_tree: bool,
     file_tree_nodes: &[FileTreeNode],
     collapsed_dirs: &HashSet<String>,
+    file_explorer: &FileExplorerState,
     diff_focused: bool,
     search_state: Option<(&str, usize, usize)>,
     search_textarea: Option<&tui_textarea::TextArea<'_>>,
@@ -150,7 +152,13 @@ pub fn render(
                     ),
                 ])
             } else {
-                build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr, theme)
+                build_window_title(
+                    ctx_mgr.active_window(),
+                    ctx_id,
+                    ctx_mgr,
+                    theme,
+                    file_explorer.active,
+                )
             };
             let block = Block::default()
                 .title(title)
@@ -162,7 +170,20 @@ pub fn render(
                     render_status_main(frame, fl.main_panel, model, config, theme, block);
                 }
                 ContextId::Files => {
-                    if show_file_tree {
+                    if file_explorer.active {
+                        let items = presentation::files::render_file_explorer(file_explorer, theme);
+                        render_list_ctx(
+                            frame,
+                            fl.main_panel,
+                            block,
+                            items,
+                            selected,
+                            true,
+                            theme,
+                            ctx_mgr,
+                            ctx_id,
+                        );
+                    } else if show_file_tree {
                         let items = presentation::files::render_file_tree(
                             model,
                             theme,
@@ -432,7 +453,7 @@ pub fn render(
                 ),
             ])
         } else {
-            build_window_title(*window, ctx_id, ctx_mgr, theme)
+            build_window_title(*window, ctx_id, ctx_mgr, theme, file_explorer.active)
         };
 
         let block = Block::default()
@@ -448,7 +469,12 @@ pub fn render(
                 frame.render_widget(widget, rect);
             }
             ContextId::Files => {
-                if show_file_tree {
+                if file_explorer.active {
+                    let items = presentation::files::render_file_explorer(file_explorer, theme);
+                    render_list_ctx(
+                        frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id,
+                    );
+                } else if show_file_tree {
                     let items = presentation::files::render_file_tree(
                         model,
                         theme,
@@ -1331,6 +1357,7 @@ fn build_window_title<'a>(
     active_ctx: ContextId,
     _ctx_mgr: &ContextManager,
     theme: &Theme,
+    file_explorer_active: bool,
 ) -> Line<'a> {
     let tabs = window.tabs();
     let key = window.key_label();
@@ -1345,18 +1372,22 @@ fn build_window_title<'a>(
         if i > 0 {
             spans.push(Span::styled(" | ", Style::default().fg(theme.text_dimmed)));
         }
+        // In file-explorer mode, surface it on the Files tab label so the mode
+        // (and how it differs from the git-status list) is obvious.
+        let label = if *ctx == ContextId::Files && file_explorer_active {
+            "Explorer"
+        } else {
+            ctx.title()
+        };
         if *ctx == active_ctx {
             spans.push(Span::styled(
-                ctx.title(),
+                label,
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            spans.push(Span::styled(
-                ctx.title(),
-                Style::default().fg(theme.text_dimmed),
-            ));
+            spans.push(Span::styled(label, Style::default().fg(theme.text_dimmed)));
         }
     }
 

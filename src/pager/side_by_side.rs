@@ -110,7 +110,7 @@ impl DiffPanelLayout {
         let divider: u16 = 2;
         let unified_prefix_width: u16 = 2;
 
-        if state.view_layout == DiffViewLayout::Unified {
+        if state.view_layout == DiffViewLayout::Unified && !state.content_view {
             let content_x = inner_x + gutter * 2 + unified_prefix_width;
             let content_end_x = inner_x + inner_w;
             return Self {
@@ -135,7 +135,7 @@ impl DiffPanelLayout {
             DiffSideView::Both => None,
         };
 
-        if single_side.is_some() || is_new_file {
+        if single_side.is_some() || is_new_file || state.content_view {
             // Single panel — gutter(5) + content(rest)
             let content_x = inner_x + gutter;
             let content_end_x = inner_x + inner_w;
@@ -310,6 +310,10 @@ pub struct DiffViewState {
     pub side_view: DiffSideView,
     /// Whether to show a split or unified diff body.
     pub view_layout: DiffViewLayout,
+    /// When true, the panel is previewing a plain file's content (not a diff),
+    /// so it renders as a single full-width column instead of a redundant
+    /// side-by-side split. Transient — not a persisted user preference.
+    pub content_view: bool,
     /// Whether long lines are wrapped to fit the panel width.
     pub wrap: bool,
     /// Whether the currently viewed file exists in the working tree on disk.
@@ -358,6 +362,7 @@ impl Default for DiffViewState {
             selection: None,
             side_view: DiffSideView::Both,
             view_layout: DiffViewLayout::SideBySide,
+            content_view: false,
             wrap: false,
             file_exists_on_disk: false,
             hunk_line_offsets: Vec::new(),
@@ -659,6 +664,7 @@ impl DiffViewState {
         let same_file = self.filename == parsed.filename;
         let prev_selected_revert_hunk = self.selected_revert_hunk;
         let prev_hovered_revert_hunk = self.hovered_revert_hunk;
+        self.content_view = false;
         self.filename = parsed.filename;
         self.old_content = parsed.old_content;
         self.new_content = parsed.new_content;
@@ -694,6 +700,7 @@ impl DiffViewState {
         let same_file = self.filename == filename;
         let prev_selected_revert_hunk = self.selected_revert_hunk;
         let prev_hovered_revert_hunk = self.hovered_revert_hunk;
+        self.content_view = false;
         self.filename = filename.to_string();
         self.old_content = old.to_string();
         self.new_content = new.to_string();
@@ -1235,7 +1242,7 @@ pub fn render_diff(
     let visible_height = inner.height as usize;
     let buf = frame.buffer_mut();
 
-    if state.view_layout == DiffViewLayout::Unified {
+    if state.view_layout == DiffViewLayout::Unified && !state.content_view {
         render_unified_diff_body(
             buf,
             inner,
@@ -1247,8 +1254,8 @@ pub fn render_diff(
         return;
     }
 
-    if single_side.is_some() || is_new_file {
-        // Single-panel mode: new file, old-only, or new-only
+    if single_side.is_some() || is_new_file || state.content_view {
+        // Single-panel mode: new file, old-only, new-only, or file preview
         let show_panel = single_side.unwrap_or(DiffPanel::New); // new-file defaults to New
         let content_width = inner.width.saturating_sub(gutter_width);
 

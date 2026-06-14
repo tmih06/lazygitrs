@@ -33,6 +33,7 @@ use crate::pager::side_by_side::{
 use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
 use self::modes::diff_mode::DiffModeState;
+use self::modes::file_explorer::FileExplorerState;
 use self::modes::patch_building::PatchBuildingState;
 use self::modes::rebase_mode::{EntryStatus, RebaseModeState, RebasePhase};
 use self::popup::{HelpEntry, HelpSection};
@@ -131,6 +132,9 @@ pub(crate) enum DiffPayload {
     },
     /// Pre-parsed diff ready to apply (parsing done on background thread).
     Parsed(crate::pager::side_by_side::ParsedDiff),
+    /// Pre-parsed plain file content for the explorer preview. Rendered as a
+    /// single full-width column (not a side-by-side split).
+    FileView(crate::pager::side_by_side::ParsedDiff),
     /// No diff to show.
     Empty,
 }
@@ -180,6 +184,10 @@ pub struct Gui {
     pub file_tree_nodes: Vec<FileTreeNode>,
     /// Set of collapsed directory paths in the file tree.
     pub collapsed_dirs: HashSet<String>,
+    /// Filesystem file-explorer state (toggled with the file-explorer key).
+    /// When active, the Files panel browses all working-tree files instead of
+    /// the git-status list.
+    pub file_explorer: FileExplorerState,
     /// Whether the diff/main panel is focused (entered via Enter on a file).
     pub diff_focused: bool,
     /// Whether a diff is currently being loaded on a background thread.
@@ -432,6 +440,7 @@ impl Gui {
             show_file_tree,
             file_tree_nodes: Vec::new(),
             collapsed_dirs: HashSet::new(),
+            file_explorer: FileExplorerState::default(),
             diff_focused: false,
             diff_loading: false,
             diff_loading_since: None,
@@ -577,7 +586,7 @@ impl Gui {
                     self.sync_rebase_progress_view();
                 }
                 // Rebuild file tree if files arrived this frame.
-                if got_files && self.show_file_tree {
+                if got_files && !self.file_explorer.active && self.show_file_tree {
                     let model = self.model.lock().unwrap();
                     self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
                     self.context_mgr.files_list_len_override = Some(self.file_tree_nodes.len());
@@ -720,6 +729,7 @@ impl Gui {
                         self.show_file_tree,
                         &self.file_tree_nodes,
                         &self.collapsed_dirs,
+                        &self.file_explorer,
                         self.diff_focused,
                         search_state,
                         self.search_textarea.as_ref(),
@@ -919,6 +929,11 @@ impl Gui {
                 }
                 DiffPayload::Parsed(parsed) => {
                     self.diff_view.apply_parsed(parsed);
+                }
+                DiffPayload::FileView(parsed) => {
+                    self.diff_view.apply_parsed(parsed);
+                    // Render as a single full-width column, not a split diff.
+                    self.diff_view.content_view = true;
                 }
                 DiffPayload::Empty => {
                     self.diff_view.reset_keep_prefs();
@@ -1457,7 +1472,17 @@ impl Gui {
 
         let active = self.context_mgr.active();
         let selected = self.context_mgr.selected_active();
-        let diff_key = format!("{:?}:{}", active, selected);
+        let diff_key = if self.file_explorer.active && active == ContextId::Files {
+            let path = self
+                .file_explorer
+                .entries
+                .get(selected)
+                .map(|e| e.path.as_str())
+                .unwrap_or("");
+            format!("explorer:{path}")
+        } else {
+            format!("{:?}:{}", active, selected)
+        };
 
         if diff_key == self.last_diff_key && !self.needs_diff_refresh {
             return;
@@ -1472,6 +1497,51 @@ impl Gui {
         // Clear stale diff when selection changes so user sees "Loading..." instead of old content
         if selection_changed {
             self.diff_view.reset_keep_prefs();
+        }
+
+        // Filesystem explorer: preview the selected file's content (or clear the
+        // panel for directories) instead of loading a git diff.
+        if self.file_explorer.active && active == ContextId::Files {
+            match self.file_explorer.entries.get(selected) {
+                Some(entry) if !entry.is_dir => {
+                    let path = entry.path.clone();
+                    let git = Arc::clone(&self.git);
+                    let tx = self.diff_tx.clone();
+                    let gen_counter = Arc::clone(&self.diff_generation);
+                    self.diff_loading = true;
+                    self.diff_loading_since = Some(Instant::now());
+                    std::thread::spawn(move || {
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
+                        let abs = git.repo_path().join(&path);
+                        let payload = match modes::file_explorer::read_file_for_view(&abs) {
+                            Some(content) => DiffPayload::FileView(DiffViewState::parse_content(
+                                &path, &content, &content, 4, true,
+                            )),
+                            None => DiffPayload::FileView(DiffViewState::parse_content(
+                                &path,
+                                "(binary or unreadable file — no preview)",
+                                "(binary or unreadable file — no preview)",
+                                4,
+                                true,
+                            )),
+                        };
+                        let _ = tx.send(DiffResult {
+                            generation,
+                            diff_key,
+                            payload,
+                        });
+                    });
+                }
+                _ => {
+                    // Directory selected (or nothing) — clear the main panel.
+                    self.diff_loading = false;
+                    self.diff_loading_since = None;
+                    self.diff_view.reset_keep_prefs();
+                }
+            }
+            return;
         }
 
         let model = self.model.lock().unwrap();
@@ -4075,6 +4145,10 @@ impl Gui {
                         description: "Toggle tree view".into(),
                     },
                     HelpEntry {
+                        key: kb.files.toggle_file_explorer.clone(),
+                        description: "Toggle file explorer (browse all files)".into(),
+                    },
+                    HelpEntry {
                         key: kb.files.fetch.clone(),
                         description: "Fetch".into(),
                     },
@@ -4966,7 +5040,8 @@ impl Gui {
                         gui.needs_diff_refresh = true;
                         gui.context_mgr = context::ContextManager::new();
                         gui.diff_view.reset_keep_prefs();
-                        if gui.show_file_tree {
+                        gui.file_explorer.expanded_dirs.clear();
+                        if gui.show_file_tree || gui.file_explorer.active {
                             gui.update_file_tree_state();
                         }
                         Ok(())
@@ -6607,7 +6682,10 @@ impl Gui {
         self.commit_history_complete = model.commits.len() < DEFAULT_COMMIT_LIMIT;
 
         // Rebuild file tree inline to avoid borrow issues
-        if self.show_file_tree {
+        if self.file_explorer.active {
+            self.file_explorer.rebuild(self.git.repo_path());
+            self.context_mgr.files_list_len_override = Some(self.file_explorer.entries.len());
+        } else if self.show_file_tree {
             self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
             self.context_mgr.files_list_len_override = Some(self.file_tree_nodes.len());
         } else {
@@ -6827,6 +6905,11 @@ impl Gui {
     }
 
     pub fn update_file_tree_state(&mut self) {
+        if self.file_explorer.active {
+            self.file_explorer.rebuild(self.git.repo_path());
+            self.context_mgr.files_list_len_override = Some(self.file_explorer.entries.len());
+            return;
+        }
         if self.show_file_tree {
             let model = self.model.lock().unwrap();
             self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
@@ -6835,6 +6918,18 @@ impl Gui {
             self.file_tree_nodes.clear();
             self.context_mgr.files_list_len_override = None;
         }
+    }
+
+    /// Toggle the filesystem file explorer in the Files panel. When active, the
+    /// panel browses every file in the working tree (like a file browser)
+    /// rather than the git-status list.
+    pub fn toggle_file_explorer(&mut self) {
+        self.file_explorer.active = !self.file_explorer.active;
+        self.update_file_tree_state();
+        self.context_mgr.set_selection(0);
+        self.context_mgr
+            .set_scroll_offset(context::ContextId::Files, 0);
+        self.needs_diff_refresh = true;
     }
 
     /// Exit sub-contexts (like CommitFiles) back to their parent context

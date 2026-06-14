@@ -12,6 +12,18 @@ use crate::os::platform::Platform;
 use crate::pager::side_by_side::DiffPanel;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    // Toggle the filesystem file explorer view (browse all working-tree files).
+    if matches_key(key, &keybindings.files.toggle_file_explorer) {
+        gui.toggle_file_explorer();
+        return Ok(());
+    }
+
+    // When the filesystem explorer is active it replaces the git-status file
+    // actions with a simple file-browser interaction model.
+    if gui.file_explorer.active {
+        return handle_explorer_key(gui, key, keybindings);
+    }
+
     // Enter: toggle directory collapse in tree view, or focus diff for files
     if key.code == KeyCode::Enter {
         if gui.show_file_tree {
@@ -838,6 +850,69 @@ fn commit_with_editor(gui: &mut Gui) -> Result<()> {
         is_commit: false,
         confirm_focused: false,
     };
+    Ok(())
+}
+
+/// Key handling while the filesystem file explorer is active. The explorer is
+/// a read-only file browser, so git-mutating actions (stage, commit, discard,
+/// …) are intentionally inert here; only navigation and open-in-editor apply.
+fn handle_explorer_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    // Enter/Space: expand or collapse a directory; Enter on a file focuses the
+    // preview panel.
+    if key.code == KeyCode::Enter || key.code == KeyCode::Char(' ') {
+        let selected = gui.context_mgr.selected_active();
+        if let Some(entry) = gui.file_explorer.entries.get(selected).cloned() {
+            if entry.is_dir {
+                gui.file_explorer.toggle_dir(&entry.path);
+                gui.update_file_tree_state();
+                // Keep selection in range after the visible list reshapes.
+                let len = gui.file_explorer.entries.len();
+                if len > 0 && selected >= len {
+                    gui.context_mgr.set_selection(len - 1);
+                }
+                gui.needs_diff_refresh = true;
+            } else if key.code == KeyCode::Enter && !gui.diff_view.is_empty() {
+                gui.diff_focused = true;
+            }
+        }
+        return Ok(());
+    }
+
+    // Open the selected file in the editor / default program.
+    if matches_key(key, &keybindings.universal.edit) {
+        return explorer_open_selected(gui, false);
+    }
+    if matches_key(key, &keybindings.universal.open_file) {
+        return explorer_open_selected(gui, true);
+    }
+
+    Ok(())
+}
+
+/// Open the file currently selected in the explorer, either in the configured
+/// editor or the OS default program. No-op for directories.
+fn explorer_open_selected(gui: &mut Gui, default_program: bool) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let Some(entry) = gui.file_explorer.entries.get(selected) else {
+        return Ok(());
+    };
+    if entry.is_dir {
+        return Ok(());
+    }
+    let abs_path = gui
+        .git
+        .repo_path()
+        .join(&entry.path)
+        .to_string_lossy()
+        .to_string();
+    let os = &gui.config.user_config.os;
+    if default_program {
+        crate::config::user_config::OsConfig::run_template(&os.open, &abs_path)?;
+    } else if !os.edit.is_empty() {
+        crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path)?;
+    } else {
+        Platform::open_file(&abs_path)?;
+    }
     Ok(())
 }
 

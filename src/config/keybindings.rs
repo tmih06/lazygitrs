@@ -224,6 +224,8 @@ pub struct FilesKeybinding {
     pub view_stash_options: String,
     #[serde(rename = "toggleTreeView")]
     pub toggle_tree_view: String,
+    #[serde(rename = "toggleFileExplorer")]
+    pub toggle_file_explorer: String,
     pub fetch: String,
     #[serde(rename = "ignoreFile")]
     pub ignore_file: String,
@@ -241,6 +243,7 @@ impl Default for FilesKeybinding {
             stash_all_changes: "s".into(),
             view_stash_options: "S".into(),
             toggle_tree_view: "`".into(),
+            toggle_file_explorer: "F".into(),
             fetch: "f".into(),
             ignore_file: "i".into(),
         }

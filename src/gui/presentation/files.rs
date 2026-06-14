@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 
 use crate::config::Theme;
+use crate::gui::modes::file_explorer::FileExplorerState;
 use crate::model::Model;
 use crate::model::file_tree::FileTreeNode;
 
@@ -94,6 +95,36 @@ pub fn render_file_tree<'a>(
                 ListItem::new(line)
             } else {
                 ListItem::new(Line::raw(""))
+            }
+        })
+        .collect()
+}
+
+/// Render the filesystem file explorer entries into list items.
+///
+/// Directories show a ▶/▼ disclosure marker; files are indented to align
+/// beneath their directory's name. Selection/scroll is handled by the caller
+/// via the Files context.
+pub fn render_file_explorer<'a>(explorer: &FileExplorerState, theme: &Theme) -> Vec<ListItem<'a>> {
+    explorer
+        .entries
+        .iter()
+        .map(|entry| {
+            let indent = "  ".repeat(entry.depth);
+            if entry.is_dir {
+                let expanded = explorer.expanded_dirs.contains(&entry.path);
+                let icon = if expanded { "▼" } else { "▶" };
+                let style = Style::default().fg(theme.text_dimmed);
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!(" {indent}{icon} "), style),
+                    Span::styled(entry.name.clone(), style),
+                ]))
+            } else {
+                let style = Style::default().fg(theme.text_strong);
+                ListItem::new(Line::from(vec![
+                    Span::raw(format!("   {indent}")),
+                    Span::styled(entry.name.clone(), style),
+                ]))
             }
         })
         .collect()
