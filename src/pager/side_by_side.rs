@@ -871,6 +871,71 @@ impl DiffViewState {
         self.scroll_offset = (self.scroll_offset + amount).min(max);
     }
 
+    /// Largest `scroll_offset` that still keeps content filling the viewport,
+    /// i.e. the offset at which the final line sits on the bottom row. Scrolling
+    /// further would only reveal blank space below the last line.
+    ///
+    /// Without wrapping each logical line is exactly one row, so this is simply
+    /// `lines - visible_height`. With wrapping, line heights vary, so we walk
+    /// from the end summing each line's rendered height (using the same
+    /// per-layout width math as the renderer) until the viewport is filled.
+    fn max_scroll_offset(
+        &self,
+        inner_width: u16,
+        visible_height: usize,
+        is_new_file: bool,
+        single_side: bool,
+    ) -> usize {
+        let n = self.lines.len();
+        if visible_height == 0 || n == 0 {
+            return 0;
+        }
+        if !self.wrap {
+            return n.saturating_sub(visible_height);
+        }
+
+        let iw = inner_width as usize;
+        let unified = self.view_layout == DiffViewLayout::Unified && !self.content_view;
+        let single = self.content_view || is_new_file || single_side;
+
+        let mut acc = 0usize;
+        for i in (0..n).rev() {
+            let line = &self.lines[i];
+            let height = if line.file_header.is_some() {
+                1
+            } else if unified {
+                let cw = iw.saturating_sub(5 * 2 + 2); // GUTTER*2 + PREFIX
+                unified_line_visual_height(line, cw, self)
+            } else if single {
+                let cw = iw.saturating_sub(5); // gutter
+                let shown = if self.side_view == DiffSideView::OldOnly {
+                    &line.old_line
+                } else {
+                    &line.new_line
+                };
+                shown
+                    .as_ref()
+                    .map(|(_, t)| wrap_row_count(t, cw))
+                    .unwrap_or(1)
+            } else {
+                let total_chrome = 5 * 2 + 2; // gutter*2 + divider
+                let cw = if iw > total_chrome {
+                    iw - total_chrome
+                } else {
+                    iw
+                };
+                let panel_width = cw / 2;
+                let right = iw.saturating_sub(5 * 2 + cw / 2 + 2);
+                line_visual_height(line, panel_width, right)
+            };
+            acc += height.max(1);
+            if acc >= visible_height {
+                return i;
+            }
+        }
+        0
+    }
+
     pub fn scroll_left(&mut self, amount: usize) {
         self.horizontal_scroll = self.horizontal_scroll.saturating_sub(amount);
     }
@@ -1144,7 +1209,7 @@ impl DiffViewState {
 pub fn render_diff(
     frame: &mut Frame,
     area: Rect,
-    state: &DiffViewState,
+    state: &mut DiffViewState,
     theme: &Theme,
     focused: bool,
     diff_loading: bool,
@@ -1233,6 +1298,19 @@ pub fn render_diff(
     };
 
     let visible_height = inner.height as usize;
+
+    // Clamp scroll so the final line can't be scrolled above the bottom of the
+    // viewport — i.e. you can't scroll past the end into blank space.
+    let max_scroll = state.max_scroll_offset(
+        inner.width,
+        visible_height,
+        is_new_file,
+        single_side.is_some(),
+    );
+    if state.scroll_offset > max_scroll {
+        state.scroll_offset = max_scroll;
+    }
+
     let buf = frame.buffer_mut();
 
     if state.view_layout == DiffViewLayout::Unified && !state.content_view {
