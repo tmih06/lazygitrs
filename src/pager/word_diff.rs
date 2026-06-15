@@ -14,6 +14,16 @@ pub fn compute_word_diff(
     old_text: &str,
     new_text: &str,
 ) -> Option<(Vec<InlineSegment>, Vec<InlineSegment>)> {
+    // Word-level diffing runs Myers under the hood (worst case ~O(n^2)). A
+    // single very long line — minified JS/CSS, a base64 blob, a generated
+    // lockfile row — can stall the diff for seconds. Past this size the
+    // intra-line highlight isn't useful anyway, so fall back to whole-line
+    // emphasis by returning None.
+    const MAX_WORD_DIFF_LEN: usize = 2000;
+    if old_text.len() > MAX_WORD_DIFF_LEN || new_text.len() > MAX_WORD_DIFF_LEN {
+        return None;
+    }
+
     let diff = TextDiff::configure().diff_unicode_words(old_text, new_text);
 
     let mut old_segments = Vec::new();

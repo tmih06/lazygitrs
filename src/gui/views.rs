@@ -2914,7 +2914,7 @@ pub fn render_popup(
                 if !visible_entries.is_empty() {
                     display.push((true, section.title.clone(), String::new()));
                     for entry in visible_entries {
-                        display.push((false, entry.key.clone(), entry.description.clone()));
+                        display.push((false, entry.key.to_string(), entry.description.clone()));
                     }
                 }
             }

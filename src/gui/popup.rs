@@ -2,6 +2,7 @@ use anyhow::Result;
 use tui_textarea::{CursorMove, TextArea};
 
 use super::Gui;
+use crate::config::keybindings::Key;
 
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -595,7 +596,7 @@ pub struct HelpSection {
 }
 
 pub struct HelpEntry {
-    pub key: String,
+    pub key: Key,
     pub description: String,
 }
 

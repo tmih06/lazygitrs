@@ -20,7 +20,7 @@ use crossterm::{cursor, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::config::keybindings::parse_key;
+use crate::config::keybindings::Key;
 use crate::config::{AppConfig, AppState};
 use crate::git::{DEFAULT_COMMIT_LIMIT, GitCommands, MODEL_PART_COUNT, ModelPart};
 use crate::model::Model;
@@ -328,6 +328,26 @@ pub struct Gui {
     /// Whether the mouse is currently hovering the AI-generate button (✦)
     /// in the commit message popup. Drives tooltip visibility.
     pub commit_ai_button_hovered: bool,
+    /// Cached resolved theme and the `current_theme_index` it was built from.
+    /// `active_theme()` only rebuilds it (JSON parse / user-theme disk read)
+    /// when the index changes, instead of on every rendered frame.
+    cached_theme: crate::config::Theme,
+    cached_theme_index: usize,
+    /// Dirty flag for the render loop: when false the main loop skips the
+    /// (full) re-render. Set whenever state affecting the frame changes —
+    /// input, background results, refresh, spinner ticks. Eliminates the
+    /// ~60fps idle redraw.
+    needs_redraw: bool,
+    /// Wall-clock timestamp of the last spinner advance, so animation cadence
+    /// is decoupled from the frame/poll rate.
+    last_spinner_tick: Instant,
+    /// Background full-refresh plumbing. `start_refresh` spawns `load_model` on
+    /// a worker thread and `receive_refresh_results` applies the completed model
+    /// on the UI thread, so automatic refreshes (focus, interval, post-op) never
+    /// block rendering/input.
+    refresh_rx: mpsc::Receiver<Result<Model>>,
+    refresh_tx: mpsc::Sender<Result<Model>>,
+    refresh_in_flight: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,6 +383,7 @@ impl Gui {
             message: format!("{:#}", err),
             kind: MessageKind::Error,
         };
+        self.needs_redraw = true;
     }
 
     pub fn new(config: AppConfig, git: GitCommands) -> Result<Self> {
@@ -372,6 +393,7 @@ impl Gui {
         let (remote_op_tx, remote_op_rx) = mpsc::channel();
         let (auto_fetch_tx, auto_fetch_rx) = mpsc::channel();
         let (menu_async_tx, menu_async_rx) = mpsc::channel();
+        let (refresh_tx, refresh_rx) = mpsc::channel();
         let show_file_tree = config
             .app_state
             .show_file_tree
@@ -505,15 +527,86 @@ impl Gui {
             commit_details_scroll_hash: String::new(),
             show_commit_details,
             commit_ai_button_hovered: false,
+            cached_theme: crate::config::Theme::default(),
+            cached_theme_index: usize::MAX,
+            needs_redraw: true,
+            last_spinner_tick: Instant::now(),
+            refresh_rx,
+            refresh_tx,
+            refresh_in_flight: false,
         })
     }
 
     /// Get the currently active theme.
-    pub fn active_theme(&self) -> crate::config::Theme {
-        crate::config::COLOR_THEMES
-            .get(self.current_theme_index)
-            .map(|ct| ct.to_theme())
-            .unwrap_or_default()
+    ///
+    /// The resolved [`Theme`] is cached and only rebuilt when
+    /// `current_theme_index` changes. Rebuilding parses embedded JSON (and, for
+    /// user themes, reads from disk), so doing it on every frame was pure waste
+    /// — this collapses it to once per theme switch.
+    pub fn active_theme(&mut self) -> crate::config::Theme {
+        if self.cached_theme_index != self.current_theme_index {
+            self.cached_theme = crate::config::COLOR_THEMES
+                .get(self.current_theme_index)
+                .map(|ct| ct.to_theme())
+                .unwrap_or_default();
+            self.cached_theme_index = self.current_theme_index;
+        }
+        self.cached_theme.clone()
+    }
+
+    /// True when something can change the rendered frame without further user
+    /// input: streamed initial load, in-flight diff/commit-page/AI/remote/
+    /// auto-fetch work, an async menu item, background stat/message fetches, or
+    /// the temporary post-operation success ✓. Used to (a) keep redrawing while
+    /// work is pending, (b) animate the spinner, and (c) pick the event-poll
+    /// timeout. Every async op has an observable in-flight flag, so combined
+    /// with the `prev_busy` snapshot the main loop never misses the redraw on
+    /// the frame a result lands.
+    fn has_background_activity(&self) -> bool {
+        if self.initial_load_rx.is_some()
+            || self.diff_loading
+            || self.needs_diff_refresh
+            || self.needs_refresh
+            || self.needs_files_refresh
+            || self.refresh_in_flight
+            || self.commit_page_loading
+            || self.auto_fetch_in_flight
+            || self.remote_op_label.is_some()
+            || self.ai_commit_generation_active()
+        {
+            return true;
+        }
+        // Async menu item (e.g. fetching a PR URL) shows a loading spinner.
+        if matches!(
+            &self.popup,
+            PopupState::Menu {
+                loading_index: Some(_),
+                ..
+            }
+        ) {
+            return true;
+        }
+        // Temporary success ✓ that auto-expires after 5s — keep redrawing until
+        // it should disappear.
+        if self
+            .remote_op_success_at
+            .map(|t| t.elapsed() < std::time::Duration::from_secs(5))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        // Background commit stat / full-message fetches that populate caches.
+        let stats_busy = self
+            .commit_stats_inflight
+            .lock()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        let messages_busy = self
+            .commit_messages_inflight
+            .lock()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        stats_busy || messages_busy
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -549,7 +642,18 @@ impl Gui {
     }
 
     fn main_loop(&mut self, terminal: &mut Term) -> Result<()> {
+        // Spinner advance cadence + event-poll timeout while animating.
+        const SPINNER_TICK: std::time::Duration = std::time::Duration::from_millis(80);
+        // Idle poll timeout: long enough to keep CPU near zero, short enough to
+        // stay responsive to focus events and the auto-refresh interval. Key
+        // input wakes `event::poll` immediately regardless of this value.
+        const IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
         loop {
+            // Snapshot of background activity carried over from the previous
+            // iteration. This is what guarantees a redraw on the frame a
+            // background result lands and clears its in-flight flag.
+            let prev_busy = self.has_background_activity();
+
             // Drain any model parts that have arrived from the background load.
             if let Some(rx) = &self.initial_load_rx {
                 let mut got_files = false;
@@ -646,183 +750,210 @@ impl Gui {
             // Check for completed background menu item operations
             self.receive_menu_async_results();
 
-            // Advance spinner animation
-            self.spinner_frame = self.spinner_frame.wrapping_add(1);
+            // Check for a completed background full refresh
+            self.receive_refresh_results();
 
-            // Render
-            let theme = self.active_theme();
-            terminal.draw(|frame| {
-                if self.rebase_mode.active {
-                    presentation::rebase_mode::render(frame, &mut self.rebase_mode, &theme);
-                    // Render popup overlay on top of rebase mode
-                    if self.popup != PopupState::None {
-                        views::render_popup(
-                            frame,
-                            &self.popup,
-                            frame.area(),
-                            self.spinner_frame,
-                            &theme,
-                            self.commit_ai_button_hovered,
-                            !self
-                                .config
-                                .user_config
-                                .git
-                                .commit
-                                .generate_command
-                                .trim()
-                                .is_empty(),
-                        );
-                    } else if self.ai_commit_generation_active() {
-                        views::render_loading_overlay(
-                            frame,
-                            frame.area(),
-                            self.spinner_frame,
-                            &theme,
-                            "AI Commit",
-                            "Generating commit message...",
-                            Some(("Esc esc", "cancel")),
-                        );
-                    }
-                } else if self.diff_mode.active {
-                    let diff_loading_show = self.diff_loading
-                        && self
-                            .diff_loading_since
-                            .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
-                            .unwrap_or(false);
-                    presentation::diff_mode::render(
-                        frame,
-                        &mut self.diff_mode,
-                        &mut self.diff_view,
-                        &theme,
-                        self.diff_loading,
-                        diff_loading_show,
-                    );
-                    // Render popup overlay on top of diff mode (for ? help, errors, etc.)
-                    if self.popup != PopupState::None {
-                        views::render_popup(
-                            frame,
-                            &self.popup,
-                            frame.area(),
-                            self.spinner_frame,
-                            &theme,
-                            self.commit_ai_button_hovered,
-                            !self
-                                .config
-                                .user_config
-                                .git
-                                .commit
-                                .generate_command
-                                .trim()
-                                .is_empty(),
-                        );
-                    } else if self.ai_commit_generation_active() {
-                        views::render_loading_overlay(
-                            frame,
-                            frame.area(),
-                            self.spinner_frame,
-                            &theme,
-                            "AI Commit",
-                            "Generating commit message...",
-                            Some(("Esc esc", "cancel")),
-                        );
-                    }
-                } else {
-                    let model = self.model.lock().unwrap();
-                    let search_state = if self.search_active || !self.search_query.is_empty() {
-                        Some((
-                            self.search_query.as_str(),
-                            self.search_matches.len(),
-                            self.search_match_idx,
-                        ))
-                    } else {
-                        None
-                    };
-                    let cmd_log = self.command_log.lock().unwrap();
-                    views::render(
-                        frame,
-                        &model,
-                        &mut self.context_mgr,
-                        &self.layout,
-                        &self.popup,
-                        &self.config,
-                        &theme,
-                        &mut self.diff_view,
-                        self.screen_mode,
-                        self.show_file_tree,
-                        &self.file_tree_nodes,
-                        &self.collapsed_dirs,
-                        &self.file_explorer,
-                        self.diff_focused,
-                        search_state,
-                        self.search_textarea.as_ref(),
-                        &cmd_log,
-                        self.show_command_log,
-                        &self.commit_branch_filter,
-                        self.show_commit_file_tree,
-                        &self.commit_file_tree_nodes,
-                        &self.commit_files_collapsed_dirs,
-                        &self.commit_files_hash,
-                        &self.commit_files_message,
-                        &self.branch_commits_name,
-                        &self.remote_branches_name,
-                        self.sub_commits_parent_context,
-                        self.spinner_frame,
-                        self.remote_op_label.as_deref(),
-                        self.remote_op_success_at
-                            .map(|t| t.elapsed() < std::time::Duration::from_secs(5))
-                            .unwrap_or(false),
-                        &self.cherry_pick_clipboard,
-                        self.range_select_anchor,
-                        self.diff_loading,
-                        // Only show "Loading diff..." text after a short delay to avoid jitter on fast loads
-                        self.diff_loading
+            // Mark the frame dirty if background work is (or just was) pending,
+            // so its result — and any spinner animation — actually renders.
+            let now_busy = self.has_background_activity();
+            if prev_busy || now_busy {
+                self.needs_redraw = true;
+            }
+
+            // Advance the loading spinner on a wall-clock cadence (decoupled
+            // from the frame rate) only while something is animating.
+            if now_busy && self.last_spinner_tick.elapsed() >= SPINNER_TICK {
+                self.spinner_frame = self.spinner_frame.wrapping_add(1);
+                self.last_spinner_tick = Instant::now();
+                self.needs_redraw = true;
+            }
+
+            // Render only when something changed since the last frame.
+            if self.needs_redraw {
+                let theme = self.active_theme();
+                terminal.draw(|frame| {
+                    if self.rebase_mode.active {
+                        presentation::rebase_mode::render(frame, &mut self.rebase_mode, &theme);
+                        // Render popup overlay on top of rebase mode
+                        if self.popup != PopupState::None {
+                            views::render_popup(
+                                frame,
+                                &self.popup,
+                                frame.area(),
+                                self.spinner_frame,
+                                &theme,
+                                self.commit_ai_button_hovered,
+                                !self
+                                    .config
+                                    .user_config
+                                    .git
+                                    .commit
+                                    .generate_command
+                                    .trim()
+                                    .is_empty(),
+                            );
+                        } else if self.ai_commit_generation_active() {
+                            views::render_loading_overlay(
+                                frame,
+                                frame.area(),
+                                self.spinner_frame,
+                                &theme,
+                                "AI Commit",
+                                "Generating commit message...",
+                                Some(("Esc esc", "cancel")),
+                            );
+                        }
+                    } else if self.diff_mode.active {
+                        let diff_loading_show = self.diff_loading
                             && self
                                 .diff_loading_since
                                 .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
-                                .unwrap_or(false),
-                        &self.commit_stats_cache,
-                        &self.commit_stats_inflight,
-                        &self.commit_messages_cache,
-                        &self.commit_messages_inflight,
-                        &self.git,
-                        &mut self.commit_details_scroll,
-                        &mut self.commit_details_scroll_hash,
-                        self.show_commit_details,
-                        self.commit_ai_button_hovered,
-                        !self
-                            .config
-                            .user_config
-                            .git
-                            .commit
-                            .generate_command
-                            .trim()
-                            .is_empty(),
-                    );
-                    if self.popup == PopupState::None && self.ai_commit_generation_active() {
-                        views::render_loading_overlay(
+                                .unwrap_or(false);
+                        presentation::diff_mode::render(
                             frame,
-                            frame.area(),
-                            self.spinner_frame,
+                            &mut self.diff_mode,
+                            &mut self.diff_view,
                             &theme,
-                            "AI Commit",
-                            "Generating commit message...",
-                            Some(("Esc esc", "cancel")),
+                            self.diff_loading,
+                            diff_loading_show,
                         );
+                        // Render popup overlay on top of diff mode (for ? help, errors, etc.)
+                        if self.popup != PopupState::None {
+                            views::render_popup(
+                                frame,
+                                &self.popup,
+                                frame.area(),
+                                self.spinner_frame,
+                                &theme,
+                                self.commit_ai_button_hovered,
+                                !self
+                                    .config
+                                    .user_config
+                                    .git
+                                    .commit
+                                    .generate_command
+                                    .trim()
+                                    .is_empty(),
+                            );
+                        } else if self.ai_commit_generation_active() {
+                            views::render_loading_overlay(
+                                frame,
+                                frame.area(),
+                                self.spinner_frame,
+                                &theme,
+                                "AI Commit",
+                                "Generating commit message...",
+                                Some(("Esc esc", "cancel")),
+                            );
+                        }
+                    } else {
+                        let model = self.model.lock().unwrap();
+                        let search_state = if self.search_active || !self.search_query.is_empty() {
+                            Some((
+                                self.search_query.as_str(),
+                                self.search_matches.len(),
+                                self.search_match_idx,
+                            ))
+                        } else {
+                            None
+                        };
+                        let cmd_log = self.command_log.lock().unwrap();
+                        views::render(
+                            frame,
+                            &model,
+                            &mut self.context_mgr,
+                            &self.layout,
+                            &self.popup,
+                            &self.config,
+                            &theme,
+                            &mut self.diff_view,
+                            self.screen_mode,
+                            self.show_file_tree,
+                            &self.file_tree_nodes,
+                            &self.collapsed_dirs,
+                            &self.file_explorer,
+                            self.diff_focused,
+                            search_state,
+                            self.search_textarea.as_ref(),
+                            &cmd_log,
+                            self.show_command_log,
+                            &self.commit_branch_filter,
+                            self.show_commit_file_tree,
+                            &self.commit_file_tree_nodes,
+                            &self.commit_files_collapsed_dirs,
+                            &self.commit_files_hash,
+                            &self.commit_files_message,
+                            &self.branch_commits_name,
+                            &self.remote_branches_name,
+                            self.sub_commits_parent_context,
+                            self.spinner_frame,
+                            self.remote_op_label.as_deref(),
+                            self.remote_op_success_at
+                                .map(|t| t.elapsed() < std::time::Duration::from_secs(5))
+                                .unwrap_or(false),
+                            &self.cherry_pick_clipboard,
+                            self.range_select_anchor,
+                            self.diff_loading,
+                            // Only show "Loading diff..." text after a short delay to avoid jitter on fast loads
+                            self.diff_loading
+                                && self
+                                    .diff_loading_since
+                                    .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
+                                    .unwrap_or(false),
+                            &self.commit_stats_cache,
+                            &self.commit_stats_inflight,
+                            &self.commit_messages_cache,
+                            &self.commit_messages_inflight,
+                            &self.git,
+                            &mut self.commit_details_scroll,
+                            &mut self.commit_details_scroll_hash,
+                            self.show_commit_details,
+                            self.commit_ai_button_hovered,
+                            !self
+                                .config
+                                .user_config
+                                .git
+                                .commit
+                                .generate_command
+                                .trim()
+                                .is_empty(),
+                        );
+                        if self.popup == PopupState::None && self.ai_commit_generation_active() {
+                            views::render_loading_overlay(
+                                frame,
+                                frame.area(),
+                                self.spinner_frame,
+                                &theme,
+                                "AI Commit",
+                                "Generating commit message...",
+                                Some(("Esc esc", "cancel")),
+                            );
+                        }
                     }
-                }
-            })?;
+                })?;
+                self.needs_redraw = false;
+            }
 
-            // Handle events
-            if event::poll(std::time::Duration::from_millis(16))? {
+            // Handle events. A short timeout while busy keeps the spinner
+            // smooth and picks up background results promptly; a longer idle
+            // timeout drops CPU to ~0. Key/mouse input wakes poll immediately
+            // either way.
+            let poll_timeout = if now_busy { SPINNER_TICK } else { IDLE_POLL };
+            if event::poll(poll_timeout)? {
                 match event::read()? {
                     Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => {
                         if let Err(err) = self.handle_key(key) {
                             self.show_error("Command failed", err);
                         }
+                        self.needs_redraw = true;
                     }
-                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse);
+                        self.needs_redraw = true;
+                    }
                     Event::Resize(w, h) => {
                         self.layout.update_size(w, h);
+                        self.needs_redraw = true;
                         // Re-flow any active commit-message textarea to the new width so
                         // wrapping stays consistent with what the user sees.
                         let popup_width = (w * 60 / 100).clamp(30, 60).min(w);
@@ -872,6 +1003,7 @@ impl Gui {
                     }
                     Event::Paste(data) => {
                         self.handle_paste(data);
+                        self.needs_redraw = true;
                     }
                     _ => {}
                 }
@@ -881,30 +1013,30 @@ impl Gui {
             let refresh_interval = self.config.user_config.refresher.refresh_interval;
             if self.config.user_config.git.auto_refresh
                 && refresh_interval > 0
+                && !self.refresh_in_flight
                 && self.last_refresh_at.elapsed().as_secs() >= refresh_interval
             {
                 self.needs_refresh = true;
             }
 
-            // Refresh data if needed
+            // Refresh data if needed. A full refresh runs on a background thread
+            // (see start_refresh / receive_refresh_results) so it never blocks
+            // the UI; if one is already in flight we leave needs_refresh set and
+            // it coalesces into the next one when the current completes.
             if self.needs_refresh {
-                match self.refresh() {
-                    Ok(()) => {
-                        self.needs_refresh = false;
-                        self.needs_files_refresh = false;
-                        self.needs_diff_refresh = true;
-                        self.last_refresh_at = Instant::now();
-                    }
-                    Err(err) => {
-                        self.needs_refresh = false;
-                        self.show_error("Refresh failed", err);
-                    }
+                // Defer until the initial streaming load has finished and no
+                // refresh is already running, so they don't race on the model.
+                if !self.refresh_in_flight && self.initial_load_rx.is_none() {
+                    self.needs_refresh = false;
+                    self.needs_files_refresh = false;
+                    self.start_refresh();
                 }
-            } else if self.needs_files_refresh {
+            } else if self.needs_files_refresh && !self.refresh_in_flight {
                 match self.refresh_files_only() {
                     Ok(()) => {
                         self.needs_files_refresh = false;
                         self.needs_diff_refresh = true;
+                        self.needs_redraw = true;
                     }
                     Err(err) => {
                         self.needs_files_refresh = false;
@@ -6708,9 +6840,53 @@ impl Gui {
         true
     }
 
-    fn refresh(&mut self) -> Result<()> {
+    /// Kick off a full model reload on a background thread so the UI thread
+    /// never blocks on git. The completed model is picked up by
+    /// [`Self::receive_refresh_results`] and applied via
+    /// [`Self::apply_refreshed_model`]. Guarded by `refresh_in_flight` so only
+    /// one runs at a time; a pending `needs_refresh` coalesces into the next.
+    fn start_refresh(&mut self) {
+        // Reset pagination now so any in-flight background page load is
+        // discarded (its generation no longer matches).
         self.reset_commit_pagination();
-        let new_model = self.git.load_model()?;
+        self.refresh_in_flight = true;
+        let git = Arc::clone(&self.git);
+        let tx = self.refresh_tx.clone();
+        let cmd_log = self.command_log.clone();
+        std::thread::spawn(move || {
+            crate::os::cmd::set_thread_command_log(cmd_log);
+            let _ = tx.send(git.load_model());
+        });
+    }
+
+    /// Drain completed background refreshes (keeping only the freshest) and
+    /// apply it on the UI thread.
+    fn receive_refresh_results(&mut self) {
+        let mut latest: Option<Result<Model>> = None;
+        while let Ok(result) = self.refresh_rx.try_recv() {
+            latest = Some(result);
+        }
+        let Some(result) = latest else {
+            return;
+        };
+        self.refresh_in_flight = false;
+        self.last_refresh_at = Instant::now();
+        match result {
+            Ok(new_model) => {
+                self.apply_refreshed_model(new_model);
+                self.needs_diff_refresh = true;
+                self.needs_redraw = true;
+            }
+            Err(err) => self.show_error("Refresh failed", err),
+        }
+    }
+
+    /// Apply a freshly loaded [`Model`] and run the view-specific fix-ups a full
+    /// refresh needs (branch-filter reload, file-tree rebuild, drilled-in
+    /// sub-views, rebase progress sync). Runs on the UI thread when the
+    /// background load completes; the few git calls here are single commands
+    /// scoped to specific views, not the ~19-process full load.
+    fn apply_refreshed_model(&mut self, new_model: Model) {
         let mut model = self.model.lock().unwrap();
         model.replace_keeping_file_order(new_model);
 
@@ -6819,8 +6995,6 @@ impl Gui {
         if !is_rebasing && self.rebase_mode.in_progress_dismissed {
             self.rebase_mode.in_progress_dismissed = false;
         }
-
-        Ok(())
     }
 
     /// Lightweight refresh that only reloads files and diff stats.
@@ -7191,12 +7365,11 @@ fn read_clipboard() -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
 }
 
-fn matches_key(key: KeyEvent, binding: &str) -> bool {
-    if let Some(expected) = parse_key(binding) {
+fn matches_key(key: KeyEvent, binding: &Key) -> bool {
+    match binding.event() {
         // Compare code and modifiers, ignore kind/state
-        key.code == expected.code && key.modifiers == expected.modifiers
-    } else {
-        false
+        Some(expected) => key.code == expected.code && key.modifiers == expected.modifiers,
+        None => false,
     }
 }
 

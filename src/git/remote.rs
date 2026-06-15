@@ -42,55 +42,63 @@ impl GitCommands {
             }
         }
 
-        // Load remote branches
-        for remote in &mut remotes {
-            remote.branches = self.load_remote_branches(&remote.name)?;
-        }
+        // Load all remote branches with a single `for-each-ref refs/remotes/`,
+        // then bucket each ref to its remote (avoids one spawn per remote).
+        self.load_all_remote_branches(&mut remotes)?;
 
         Ok(remotes)
     }
 
-    fn load_remote_branches(&self, remote_name: &str) -> Result<Vec<RemoteBranch>> {
+    /// Populate `branches` for every remote using one `for-each-ref` over
+    /// `refs/remotes/`, instead of spawning a separate process per remote.
+    fn load_all_remote_branches(&self, remotes: &mut [Remote]) -> Result<()> {
+        if remotes.is_empty() {
+            return Ok(());
+        }
+
         let format = "%(refname:short)|%(objectname:short)";
         let result = self
             .git()
             .args(&[
                 "for-each-ref",
                 &format!("--format={}", format),
-                &format!("refs/remotes/{}/", remote_name),
+                "refs/remotes/",
             ])
             .run()?;
 
         if !result.success {
-            return Ok(Vec::new());
+            return Ok(());
         }
 
-        let branches = result
-            .stdout
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.splitn(2, '|').collect();
-                if parts.len() >= 2 {
-                    let full_name = parts[0];
-                    let branch_name = full_name
-                        .strip_prefix(&format!("{}/", remote_name))
-                        .unwrap_or(full_name);
-                    // Filter out HEAD (explicit or symref that resolves to just the remote name)
-                    if branch_name == "HEAD" || branch_name == remote_name {
-                        return None;
-                    }
-                    Some(RemoteBranch {
-                        name: branch_name.to_string(),
-                        remote_name: remote_name.to_string(),
-                        hash: parts[1].to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
+        // Map remote name -> index for O(1) bucketing. Owned keys so we can
+        // still mutate `remotes` while looking up.
+        let index: std::collections::HashMap<String, usize> = remotes
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.name.clone(), i))
             .collect();
 
-        Ok(branches)
+        for line in result.stdout.lines() {
+            let Some((full_name, hash)) = line.split_once('|') else {
+                continue;
+            };
+            // refname:short is "<remote>/<branch...>"; remote names contain no '/'.
+            let Some((remote_name, branch_name)) = full_name.split_once('/') else {
+                continue; // bare remote symref (e.g. "origin"); skip
+            };
+            if branch_name == "HEAD" || branch_name.is_empty() {
+                continue;
+            }
+            if let Some(&i) = index.get(remote_name) {
+                remotes[i].branches.push(RemoteBranch {
+                    name: branch_name.to_string(),
+                    remote_name: remote_name.to_string(),
+                    hash: hash.to_string(),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     pub fn add_remote(&self, name: &str, url: &str) -> Result<()> {

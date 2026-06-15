@@ -1400,10 +1400,11 @@ pub fn render_diff(
                 }
             };
 
-            let line_num = state
-                .file_line_number(line_idx, show_panel)
-                .map(|n| format!("{:>4} ", n))
-                .unwrap_or_else(|| "     ".to_string());
+            let mut numbuf = [0u8; 24];
+            let line_num: &str = match state.file_line_number(line_idx, show_panel) {
+                Some(n) => gutter_num(&mut numbuf, n),
+                None => "     ",
+            };
             let gutter_style = Style::default().fg(gutter_fg).bg(gutter_bg);
 
             if state.wrap && line_data.is_some() {
@@ -1423,18 +1424,14 @@ pub fn render_diff(
                         break;
                     }
                     let y = inner.y + row as u16;
-                    let gutter_text = if chunk_idx == 0 {
-                        line_num.clone()
-                    } else {
-                        "   · ".to_string()
-                    };
-                    buf_write_str(buf, inner.x, y, &gutter_text, gutter_style, gutter_width);
+                    let gutter_text: &str = if chunk_idx == 0 { line_num } else { "   · " };
+                    buf_write_str(buf, inner.x, y, gutter_text, gutter_style, gutter_width);
                     buf_write_spans(buf, inner.x + gutter_width, y, chunk, content_width, 0);
                     row += 1;
                 }
             } else {
                 let y = inner.y + row as u16;
-                buf_write_str(buf, inner.x, y, &line_num, gutter_style, gutter_width);
+                buf_write_str(buf, inner.x, y, line_num, gutter_style, gutter_width);
                 if line_data.is_some() {
                     let spans = build_content_spans(
                         line_data.as_ref().map(|(n, t)| (*n, t.as_str())),
@@ -1455,12 +1452,11 @@ pub fn render_diff(
                         state.horizontal_scroll,
                     );
                 } else {
-                    let fill: String = std::iter::repeat_n(' ', content_width as usize).collect();
-                    buf_write_str(
+                    buf_fill_char(
                         buf,
                         inner.x + gutter_width,
                         y,
-                        &fill,
+                        ' ',
                         Style::default().bg(bg),
                         content_width,
                     );
@@ -1513,14 +1509,16 @@ pub fn render_diff(
             let right_gutter_style = Style::default().fg(right_gutter_fg).bg(right_gutter_bg);
             let divider_style = Style::default().fg(theme.diff_gutter);
 
-            let left_num = state
-                .file_line_number(line_idx, DiffPanel::Old)
-                .map(|n| format!("{:>4} ", n))
-                .unwrap_or_else(|| "     ".to_string());
-            let right_num = state
-                .file_line_number(line_idx, DiffPanel::New)
-                .map(|n| format!("{:>4} ", n))
-                .unwrap_or_else(|| "     ".to_string());
+            let mut left_numbuf = [0u8; 24];
+            let left_num: &str = match state.file_line_number(line_idx, DiffPanel::Old) {
+                Some(n) => gutter_num(&mut left_numbuf, n),
+                None => "     ",
+            };
+            let mut right_numbuf = [0u8; 24];
+            let right_num: &str = match state.file_line_number(line_idx, DiffPanel::New) {
+                Some(n) => gutter_num(&mut right_numbuf, n),
+                None => "     ",
+            };
 
             let is_insert = diff_line.change_type == ChangeType::Insert;
             let is_delete = diff_line.change_type == ChangeType::Delete;
@@ -1572,46 +1570,35 @@ pub fn render_diff(
                     }
                     let y = inner.y + row as u16;
 
-                    let left_gutter_text = if chunk_idx == 0 {
-                        left_num.clone()
-                    } else {
-                        "   · ".to_string()
-                    };
-                    let right_gutter_text = if chunk_idx == 0 {
-                        right_num.clone()
-                    } else {
-                        "   · ".to_string()
-                    };
+                    let left_gutter_text: &str = if chunk_idx == 0 { left_num } else { "   · " };
+                    let right_gutter_text: &str = if chunk_idx == 0 { right_num } else { "   · " };
 
                     // Left gutter + content
                     buf_write_str(
                         buf,
                         inner.x,
                         y,
-                        &left_gutter_text,
+                        left_gutter_text,
                         gutter_style,
                         gutter_width,
                     );
                     if is_insert {
-                        let slash: String =
-                            std::iter::repeat_n('/', panel_width as usize).collect();
-                        buf_write_str(
+                        buf_fill_char(
                             buf,
                             inner.x + gutter_width,
                             y,
-                            &slash,
+                            '/',
                             Style::default().fg(theme.diff_line_number).bg(left_bg),
                             panel_width,
                         );
                     } else if let Some(chunk) = left_wrapped.get(chunk_idx) {
                         buf_write_spans(buf, inner.x + gutter_width, y, chunk, panel_width, 0);
                     } else {
-                        let fill: String = std::iter::repeat_n(' ', panel_width as usize).collect();
-                        buf_write_str(
+                        buf_fill_char(
                             buf,
                             inner.x + gutter_width,
                             y,
-                            &fill,
+                            ' ',
                             Style::default().bg(left_bg),
                             panel_width,
                         );
@@ -1657,31 +1644,27 @@ pub fn render_diff(
                         buf,
                         right_gutter_x,
                         y,
-                        &right_gutter_text,
+                        right_gutter_text,
                         right_gutter_style,
                         gutter_width,
                     );
                     if is_delete {
-                        let slash: String =
-                            std::iter::repeat_n('/', right_content_width as usize).collect();
-                        buf_write_str(
+                        buf_fill_char(
                             buf,
                             right_content_x,
                             y,
-                            &slash,
+                            '/',
                             Style::default().fg(theme.diff_line_number).bg(right_bg),
                             right_content_width,
                         );
                     } else if let Some(chunk) = right_wrapped.get(chunk_idx) {
                         buf_write_spans(buf, right_content_x, y, chunk, right_content_width, 0);
                     } else {
-                        let fill: String =
-                            std::iter::repeat_n(' ', right_content_width as usize).collect();
-                        buf_write_str(
+                        buf_fill_char(
                             buf,
                             right_content_x,
                             y,
-                            &fill,
+                            ' ',
                             Style::default().bg(right_bg),
                             right_content_width,
                         );
@@ -1693,18 +1676,20 @@ pub fn render_diff(
                 let y = inner.y + row as u16;
 
                 // Left gutter
-                buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
+                buf_write_str(buf, inner.x, y, left_num, gutter_style, gutter_width);
 
                 // Left content
-                let left_spans = if is_insert {
-                    let slash_fill: String =
-                        std::iter::repeat_n('/', panel_width as usize).collect();
-                    vec![Span::styled(
-                        slash_fill,
+                if is_insert {
+                    buf_fill_char(
+                        buf,
+                        inner.x + gutter_width,
+                        y,
+                        '/',
                         Style::default().fg(theme.diff_line_number).bg(left_bg),
-                    )]
+                        panel_width,
+                    );
                 } else {
-                    build_content_spans(
+                    let left_spans = build_content_spans(
                         diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
                         &diff_line.old_segments,
                         diff_line.change_type,
@@ -1713,16 +1698,16 @@ pub fn render_diff(
                         left_bg,
                         theme,
                         panel_width as usize,
-                    )
-                };
-                buf_write_spans(
-                    buf,
-                    inner.x + gutter_width,
-                    y,
-                    &left_spans,
-                    panel_width,
-                    state.horizontal_scroll,
-                );
+                    );
+                    buf_write_spans(
+                        buf,
+                        inner.x + gutter_width,
+                        y,
+                        &left_spans,
+                        panel_width,
+                        state.horizontal_scroll,
+                    );
+                }
 
                 // Divider or revert marker.
                 let show_marker =
@@ -1762,21 +1747,23 @@ pub fn render_diff(
                     buf,
                     right_gutter_x,
                     y,
-                    &right_num,
+                    right_num,
                     right_gutter_style,
                     gutter_width,
                 );
 
                 // Right content
-                let right_spans = if is_delete {
-                    let slash_fill: String =
-                        std::iter::repeat_n('/', panel_width as usize).collect();
-                    vec![Span::styled(
-                        slash_fill,
+                if is_delete {
+                    buf_fill_char(
+                        buf,
+                        right_content_x,
+                        y,
+                        '/',
                         Style::default().fg(theme.diff_line_number).bg(right_bg),
-                    )]
+                        right_content_width,
+                    );
                 } else {
-                    build_content_spans(
+                    let right_spans = build_content_spans(
                         diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
                         &diff_line.new_segments,
                         diff_line.change_type,
@@ -1785,16 +1772,16 @@ pub fn render_diff(
                         right_bg,
                         theme,
                         panel_width as usize,
-                    )
-                };
-                buf_write_spans(
-                    buf,
-                    right_content_x,
-                    y,
-                    &right_spans,
-                    right_content_width,
-                    state.horizontal_scroll,
-                );
+                    );
+                    buf_write_spans(
+                        buf,
+                        right_content_x,
+                        y,
+                        &right_spans,
+                        right_content_width,
+                        state.horizontal_scroll,
+                    );
+                }
 
                 row += 1;
             }
@@ -2066,10 +2053,12 @@ fn render_unified_row(
             break;
         }
         let y = inner.y + *row as u16;
-        let old_num_text = unified_line_number_text(old_num, chunk_idx);
-        let new_num_text = unified_line_number_text(new_num, chunk_idx);
-        buf_write_str(buf, old_num_x, y, &old_num_text, gutter_style, GUTTER_WIDTH);
-        buf_write_str(buf, new_num_x, y, &new_num_text, gutter_style, GUTTER_WIDTH);
+        let mut old_numbuf = [0u8; 24];
+        let mut new_numbuf = [0u8; 24];
+        let old_num_text = unified_line_number_text(&mut old_numbuf, old_num, chunk_idx);
+        let new_num_text = unified_line_number_text(&mut new_numbuf, new_num, chunk_idx);
+        buf_write_str(buf, old_num_x, y, old_num_text, gutter_style, GUTTER_WIDTH);
+        buf_write_str(buf, new_num_x, y, new_num_text, gutter_style, GUTTER_WIDTH);
 
         if chunk_idx == 0 {
             if let Some(hunk_idx) = marker_hunk_idx {
@@ -2096,13 +2085,12 @@ fn render_unified_row(
             } else {
                 buf_write_str(buf, prefix_x, y, " ", sign_style, 1);
             }
-            buf_write_str(buf, prefix_x + 1, y, &sign.to_string(), sign_style, 1);
+            buf_fill_char(buf, prefix_x + 1, y, sign, sign_style, 1);
         } else {
             buf_write_str(buf, prefix_x, y, " ·", sign_style, PREFIX_WIDTH);
         }
 
-        let fill: String = std::iter::repeat_n(' ', content_width as usize).collect();
-        buf_write_str(buf, content_x, y, &fill, fill_style, content_width);
+        buf_fill_char(buf, content_x, y, ' ', fill_style, content_width);
         buf_write_spans(
             buf,
             content_x,
@@ -2119,11 +2107,11 @@ fn render_unified_row(
     }
 }
 
-fn unified_line_number_text(num: Option<usize>, chunk_idx: usize) -> String {
+fn unified_line_number_text(scratch: &mut [u8; 24], num: Option<usize>, chunk_idx: usize) -> &str {
     match (num, chunk_idx) {
-        (Some(n), 0) => format!("{:>4} ", n),
-        (Some(_), _) => "   · ".to_string(),
-        (None, _) => "     ".to_string(),
+        (Some(n), 0) => gutter_num(scratch, n),
+        (Some(_), _) => "   · ",
+        (None, _) => "     ",
     }
 }
 
@@ -2217,6 +2205,40 @@ fn buf_write_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max
         }
         col += width as u16;
     }
+}
+
+/// Paint `width` cells with `ch` in `style` starting at (x, y), clamped to the
+/// buffer. Zero-allocation replacement for building a `" ".repeat(w)` / slash
+/// fill `String` on every rendered row.
+#[inline]
+fn buf_fill_char(buf: &mut Buffer, x: u16, y: u16, ch: char, style: Style, width: u16) {
+    let buf_area = buf.area();
+    if y < buf_area.y || y >= buf_area.y + buf_area.height {
+        return;
+    }
+    let step = (unicode_display_width(ch) as u16).max(1);
+    let end_col = x.saturating_add(width).min(buf_area.x + buf_area.width);
+    let mut col = x;
+    while col < end_col {
+        if let Some(cell) = buf.cell_mut((col, y)) {
+            cell.set_char(ch);
+            cell.set_style(style);
+        }
+        col += step;
+    }
+}
+
+/// Format a right-aligned, 4-wide line number plus a trailing space ("  12 ")
+/// into a caller-owned stack buffer, returning it as `&str`. Avoids the
+/// `format!` heap allocation that otherwise ran for every gutter cell on every
+/// rendered row. `write!` of an integer is always valid ASCII.
+#[inline]
+fn gutter_num(scratch: &mut [u8; 24], n: usize) -> &str {
+    use std::io::Write;
+    let mut cur = std::io::Cursor::new(&mut scratch[..]);
+    let _ = write!(cur, "{:>4} ", n);
+    let len = cur.position() as usize;
+    std::str::from_utf8(&scratch[..len]).unwrap_or("     ")
 }
 
 /// Write styled spans directly to the buffer at (x, y), clamped to max_width.
@@ -2497,10 +2519,10 @@ fn gutter_fg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
 #[allow(clippy::too_many_arguments)]
 fn build_content_spans<'a>(
     line_data: Option<(usize, &str)>,
-    segments: &Option<Vec<InlineSegment>>,
+    segments: &'a Option<Vec<InlineSegment>>,
     change_type: ChangeType,
     is_old_side: bool,
-    highlighter: &FileHighlighter,
+    highlighter: &'a FileHighlighter,
     bg: Color,
     theme: &Theme,
     max_width: usize,
@@ -2548,7 +2570,7 @@ fn build_content_spans<'a>(
 
 /// Build spans with word-level diff emphasis.
 fn build_word_diff_spans<'a>(
-    segments: &[InlineSegment],
+    segments: &'a [InlineSegment],
     is_old_side: bool,
     bg: Color,
     theme: &Theme,
@@ -2564,7 +2586,7 @@ fn build_word_diff_spans<'a>(
                     theme.diff_add_word
                 };
                 Span::styled(
-                    seg.text.clone(),
+                    seg.text.as_str(),
                     Style::default()
                         .bg(emphasis_bg)
                         .fg(theme.text_strong)
@@ -2572,7 +2594,7 @@ fn build_word_diff_spans<'a>(
                 )
             } else {
                 Span::styled(
-                    seg.text.clone(),
+                    seg.text.as_str(),
                     Style::default().bg(bg).fg(theme.syntax_default),
                 )
             }

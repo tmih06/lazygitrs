@@ -122,8 +122,12 @@ impl FileHighlighter {
     }
 
     /// Get highlighted spans for a specific line (1-based line number).
+    ///
+    /// Spans borrow the cached token strings (lifetime tied to `&self`) instead
+    /// of cloning each token's `String` on every call — the cache is rebuilt
+    /// only when the diff content changes, so the render path can borrow it.
     pub fn get_line_spans<'a>(
-        &self,
+        &'a self,
         line_number: usize,
         bg: Option<Color>,
         theme: &Theme,
@@ -141,7 +145,7 @@ impl FileHighlighter {
                         let fg = highlight_idx
                             .map(|i| highlight_color(i, theme))
                             .unwrap_or(default_fg);
-                        Span::styled(text.clone(), Style::default().fg(fg).bg(bg_color))
+                        Span::styled(text.as_str(), Style::default().fg(fg).bg(bg_color))
                     })
                     .collect()
             })

@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 
 use crate::config::KeybindingConfig;
-use crate::config::keybindings::parse_key;
+use crate::config::keybindings::Key;
 use crate::gui::Gui;
 use crate::gui::popup::{MenuItem, PopupState};
 use crate::os::platform::Platform;
@@ -229,10 +229,9 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     Ok(())
 }
 
-fn matches_key(key: KeyEvent, binding: &str) -> bool {
-    if let Some(expected) = parse_key(binding) {
-        key.code == expected.code && key.modifiers == expected.modifiers
-    } else {
-        false
+fn matches_key(key: KeyEvent, binding: &Key) -> bool {
+    match binding.event() {
+        Some(expected) => key.code == expected.code && key.modifiers == expected.modifiers,
+        None => false,
     }
 }

@@ -1,5 +1,67 @@
+use std::sync::OnceLock;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
+
+/// A keybinding spec (e.g. `"q"`, `"<c-c>"`, `"<enter>"`) that parses its raw
+/// string into a [`KeyEvent`] exactly once, caching the result. Previously
+/// every keypress re-parsed every binding string via [`parse_key`]; now the
+/// parse happens on first use and subsequent matches are a plain integer
+/// comparison of the cached event.
+///
+/// `Deref<Target = str>` and the `From`/serde impls keep it a drop-in for the
+/// `String` it replaced (serializes/deserializes transparently as a string).
+#[derive(Debug, Clone, Default)]
+pub struct Key {
+    raw: String,
+    parsed: OnceLock<Option<KeyEvent>>,
+}
+
+impl Key {
+    pub fn new(raw: String) -> Self {
+        Self {
+            raw,
+            parsed: OnceLock::new(),
+        }
+    }
+
+    /// The parsed key event, computed once and cached for the lifetime of the
+    /// binding.
+    pub fn event(&self) -> Option<KeyEvent> {
+        *self.parsed.get_or_init(|| parse_key(&self.raw))
+    }
+}
+
+impl std::ops::Deref for Key {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.raw
+    }
+}
+
+impl From<&str> for Key {
+    fn from(s: &str) -> Self {
+        Key::new(s.to_string())
+    }
+}
+
+impl From<String> for Key {
+    fn from(s: String) -> Self {
+        Key::new(s)
+    }
+}
+
+impl Serialize for Key {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> Deserialize<'de> for Key {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Key::new(String::deserialize(deserializer)?))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -18,99 +80,99 @@ pub struct KeybindingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UniversalKeybinding {
-    pub quit: String,
+    pub quit: Key,
     #[serde(rename = "quit-alt1")]
-    pub quit_alt1: String,
+    pub quit_alt1: Key,
     #[serde(rename = "return")]
-    pub return_key: String,
+    pub return_key: Key,
     #[serde(rename = "quitWithoutChangingDirectory")]
-    pub quit_without_changing_directory: String,
+    pub quit_without_changing_directory: Key,
     #[serde(rename = "togglePanel")]
-    pub toggle_panel: String,
+    pub toggle_panel: Key,
     #[serde(rename = "togglePanelReverse")]
-    pub toggle_panel_reverse: String,
+    pub toggle_panel_reverse: Key,
     #[serde(rename = "prevItem")]
-    pub prev_item: String,
+    pub prev_item: Key,
     #[serde(rename = "nextItem")]
-    pub next_item: String,
+    pub next_item: Key,
     #[serde(rename = "prevItem-alt")]
-    pub prev_item_alt: String,
+    pub prev_item_alt: Key,
     #[serde(rename = "nextItem-alt")]
-    pub next_item_alt: String,
+    pub next_item_alt: Key,
     #[serde(rename = "prevPage")]
-    pub prev_page: String,
+    pub prev_page: Key,
     #[serde(rename = "nextPage")]
-    pub next_page: String,
+    pub next_page: Key,
     #[serde(rename = "scrollLeft")]
-    pub scroll_left: String,
+    pub scroll_left: Key,
     #[serde(rename = "scrollRight")]
-    pub scroll_right: String,
+    pub scroll_right: Key,
     #[serde(rename = "gotoTop")]
-    pub goto_top: String,
+    pub goto_top: Key,
     #[serde(rename = "gotoBottom")]
-    pub goto_bottom: String,
+    pub goto_bottom: Key,
     #[serde(rename = "prevBlock")]
-    pub prev_block: String,
+    pub prev_block: Key,
     #[serde(rename = "nextBlock")]
-    pub next_block: String,
+    pub next_block: Key,
     #[serde(rename = "prevBlock-alt")]
-    pub prev_block_alt: String,
+    pub prev_block_alt: Key,
     #[serde(rename = "nextBlock-alt")]
-    pub next_block_alt: String,
+    pub next_block_alt: Key,
     #[serde(rename = "nextMatch")]
-    pub next_match: String,
+    pub next_match: Key,
     #[serde(rename = "prevMatch")]
-    pub prev_match: String,
+    pub prev_match: Key,
     #[serde(rename = "startSearch")]
-    pub start_search: String,
+    pub start_search: Key,
     #[serde(rename = "optionMenu")]
-    pub option_menu: String,
-    pub edit: String,
+    pub option_menu: Key,
+    pub edit: Key,
     #[serde(rename = "openFile")]
-    pub open_file: String,
+    pub open_file: Key,
     #[serde(rename = "scrollUpMain")]
-    pub scroll_up_main: String,
+    pub scroll_up_main: Key,
     #[serde(rename = "scrollDownMain")]
-    pub scroll_down_main: String,
+    pub scroll_down_main: Key,
     #[serde(rename = "scrollUpMain-alt1")]
-    pub scroll_up_main_alt1: String,
+    pub scroll_up_main_alt1: Key,
     #[serde(rename = "scrollDownMain-alt1")]
-    pub scroll_down_main_alt1: String,
-    pub undo: String,
-    pub redo: String,
+    pub scroll_down_main_alt1: Key,
+    pub undo: Key,
+    pub redo: Key,
     #[serde(rename = "filteringMenu")]
-    pub filtering_menu: String,
+    pub filtering_menu: Key,
     #[serde(rename = "diffingMenu")]
-    pub diffing_menu: String,
+    pub diffing_menu: Key,
     #[serde(rename = "copyToClipboard")]
-    pub copy_to_clipboard: String,
-    pub refresh: String,
+    pub copy_to_clipboard: Key,
+    pub refresh: Key,
     #[serde(rename = "createRebaseOptionsMenu")]
-    pub create_rebase_options_menu: String,
+    pub create_rebase_options_menu: Key,
     #[serde(rename = "pushFiles")]
-    pub push_files: String,
+    pub push_files: Key,
     #[serde(rename = "pullFiles")]
-    pub pull_files: String,
+    pub pull_files: Key,
     #[serde(rename = "nextScreenMode")]
-    pub next_screen_mode: String,
+    pub next_screen_mode: Key,
     #[serde(rename = "prevScreenMode")]
-    pub prev_screen_mode: String,
+    pub prev_screen_mode: Key,
     #[serde(rename = "createPatchOptionsMenu")]
-    pub create_patch_options_menu: String,
+    pub create_patch_options_menu: Key,
     #[serde(rename = "revertBlock")]
-    pub revert_block: String,
+    pub revert_block: Key,
     #[serde(rename = "undoRevertBlock")]
-    pub undo_revert_block: String,
+    pub undo_revert_block: Key,
     #[serde(rename = "shrinkSidePanel")]
-    pub shrink_side_panel: String,
+    pub shrink_side_panel: Key,
     #[serde(rename = "expandSidePanel")]
-    pub expand_side_panel: String,
+    pub expand_side_panel: Key,
     #[serde(rename = "sidePanelFull")]
-    pub side_panel_full: String,
+    pub side_panel_full: Key,
     #[serde(rename = "mainPanelFull")]
-    pub main_panel_full: String,
+    pub main_panel_full: Key,
     #[serde(rename = "resetSidePanel")]
-    pub reset_side_panel: String,
+    pub reset_side_panel: Key,
 }
 
 impl Default for UniversalKeybinding {
@@ -173,11 +235,11 @@ impl Default for UniversalKeybinding {
 #[serde(default)]
 pub struct StatusKeybinding {
     #[serde(rename = "checkForUpdate")]
-    pub check_for_update: String,
+    pub check_for_update: Key,
     #[serde(rename = "recentRepos")]
-    pub recent_repos: String,
+    pub recent_repos: Key,
     #[serde(rename = "allBranchesLogGraph")]
-    pub all_branches_log_graph: String,
+    pub all_branches_log_graph: Key,
 }
 
 impl Default for StatusKeybinding {
@@ -194,28 +256,28 @@ impl Default for StatusKeybinding {
 #[serde(default)]
 pub struct FilesKeybinding {
     #[serde(rename = "commitChanges")]
-    pub commit_changes: String,
+    pub commit_changes: Key,
     #[serde(rename = "generateAICommit")]
-    pub generate_ai_commit: String,
+    pub generate_ai_commit: Key,
     #[serde(rename = "commitChangesWithoutHook")]
-    pub commit_changes_without_hook: String,
+    pub commit_changes_without_hook: Key,
     #[serde(rename = "amendLastCommit")]
-    pub amend_last_commit: String,
+    pub amend_last_commit: Key,
     #[serde(rename = "commitChangesWithEditor")]
-    pub commit_changes_with_editor: String,
+    pub commit_changes_with_editor: Key,
     #[serde(rename = "toggleStagedAll")]
-    pub toggle_staged_all: String,
+    pub toggle_staged_all: Key,
     #[serde(rename = "stashAllChanges")]
-    pub stash_all_changes: String,
+    pub stash_all_changes: Key,
     #[serde(rename = "viewStashOptions")]
-    pub view_stash_options: String,
+    pub view_stash_options: Key,
     #[serde(rename = "toggleTreeView")]
-    pub toggle_tree_view: String,
+    pub toggle_tree_view: Key,
     #[serde(rename = "toggleFileExplorer")]
-    pub toggle_file_explorer: String,
-    pub fetch: String,
+    pub toggle_file_explorer: Key,
+    pub fetch: Key,
     #[serde(rename = "ignoreFile")]
-    pub ignore_file: String,
+    pub ignore_file: Key,
 }
 
 impl Default for FilesKeybinding {
@@ -241,23 +303,23 @@ impl Default for FilesKeybinding {
 #[serde(default)]
 pub struct BranchesKeybinding {
     #[serde(rename = "createPullRequest")]
-    pub create_pull_request: String,
+    pub create_pull_request: Key,
     #[serde(rename = "viewPullRequestOptions")]
-    pub view_pull_request_options: String,
+    pub view_pull_request_options: Key,
     #[serde(rename = "checkoutBranchByName")]
-    pub checkout_branch_by_name: String,
+    pub checkout_branch_by_name: Key,
     #[serde(rename = "forceCheckoutBranch")]
-    pub force_checkout_branch: String,
+    pub force_checkout_branch: Key,
     #[serde(rename = "rebaseBranch")]
-    pub rebase_branch: String,
+    pub rebase_branch: Key,
     #[serde(rename = "renameBranch")]
-    pub rename_branch: String,
+    pub rename_branch: Key,
     #[serde(rename = "mergeIntoCurrentBranch")]
-    pub merge_into_current_branch: String,
+    pub merge_into_current_branch: Key,
     #[serde(rename = "fastForward")]
-    pub fast_forward: String,
+    pub fast_forward: Key,
     #[serde(rename = "setUpstream")]
-    pub set_upstream: String,
+    pub set_upstream: Key,
 }
 
 impl Default for BranchesKeybinding {
@@ -280,45 +342,45 @@ impl Default for BranchesKeybinding {
 #[serde(default)]
 pub struct CommitsKeybinding {
     #[serde(rename = "squashDown")]
-    pub squash_down: String,
+    pub squash_down: Key,
     #[serde(rename = "renameCommit")]
-    pub rename_commit: String,
+    pub rename_commit: Key,
     #[serde(rename = "renameCommitWithEditor")]
-    pub rename_commit_with_editor: String,
+    pub rename_commit_with_editor: Key,
     #[serde(rename = "viewResetOptions")]
-    pub view_reset_options: String,
+    pub view_reset_options: Key,
     #[serde(rename = "markCommitAsFixup")]
-    pub mark_commit_as_fixup: String,
+    pub mark_commit_as_fixup: Key,
     #[serde(rename = "createFixupCommit")]
-    pub create_fixup_commit: String,
+    pub create_fixup_commit: Key,
     #[serde(rename = "squashAboveCommits")]
-    pub squash_above_commits: String,
+    pub squash_above_commits: Key,
     #[serde(rename = "moveDownCommit")]
-    pub move_down_commit: String,
+    pub move_down_commit: Key,
     #[serde(rename = "moveUpCommit")]
-    pub move_up_commit: String,
+    pub move_up_commit: Key,
     #[serde(rename = "amendToCommit")]
-    pub amend_to_commit: String,
+    pub amend_to_commit: Key,
     #[serde(rename = "pickCommit")]
-    pub pick_commit: String,
+    pub pick_commit: Key,
     #[serde(rename = "revertCommit")]
-    pub revert_commit: String,
+    pub revert_commit: Key,
     #[serde(rename = "cherryPickCopy")]
-    pub cherry_pick_copy: String,
+    pub cherry_pick_copy: Key,
     #[serde(rename = "pasteCommits")]
-    pub paste_commits: String,
+    pub paste_commits: Key,
     #[serde(rename = "tagCommit")]
-    pub tag_commit: String,
+    pub tag_commit: Key,
     #[serde(rename = "checkoutCommit")]
-    pub checkout_commit: String,
+    pub checkout_commit: Key,
     #[serde(rename = "resetCherryPick")]
-    pub reset_cherry_pick: String,
+    pub reset_cherry_pick: Key,
     #[serde(rename = "openLogMenu")]
-    pub open_log_menu: String,
+    pub open_log_menu: Key,
     #[serde(rename = "viewBisectOptions")]
-    pub view_bisect_options: String,
+    pub view_bisect_options: Key,
     #[serde(rename = "interactiveRebase")]
-    pub interactive_rebase: String,
+    pub interactive_rebase: Key,
 }
 
 impl Default for CommitsKeybinding {
@@ -352,9 +414,9 @@ impl Default for CommitsKeybinding {
 #[serde(default)]
 pub struct StashKeybinding {
     #[serde(rename = "popStash")]
-    pub pop_stash: String,
+    pub pop_stash: Key,
     #[serde(rename = "renameStash")]
-    pub rename_stash: String,
+    pub rename_stash: Key,
 }
 
 impl Default for StashKeybinding {
@@ -370,9 +432,9 @@ impl Default for StashKeybinding {
 #[serde(default)]
 pub struct CommitMessageKeybinding {
     #[serde(rename = "commitMenu")]
-    pub commit_menu: String,
+    pub commit_menu: Key,
     #[serde(rename = "aiGenerate")]
-    pub ai_generate: String,
+    pub ai_generate: Key,
 }
 
 impl Default for CommitMessageKeybinding {

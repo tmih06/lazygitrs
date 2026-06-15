@@ -48,8 +48,8 @@ pub struct CmdResult {
 impl CmdResult {
     pub fn from_output(output: Output) -> Self {
         Self {
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            stdout: utf8_or_lossy(output.stdout),
+            stderr: utf8_or_lossy(output.stderr),
             success: output.status.success(),
             exit_code: output.status.code(),
         }
@@ -62,6 +62,16 @@ impl CmdResult {
     #[allow(dead_code)]
     pub fn lines(&self) -> Vec<&str> {
         self.stdout.lines().collect()
+    }
+}
+
+/// Convert process output bytes into a String.  Git output is almost always
+/// valid UTF-8, so move the buffer in place (zero-copy) on the happy path and
+/// only fall back to a lossy allocation when the bytes are invalid.
+fn utf8_or_lossy(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
     }
 }
 

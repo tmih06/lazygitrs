@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::Result;
 
 use super::GitCommands;
@@ -61,7 +63,6 @@ impl GitCommands {
             return Ok(Vec::new());
         }
 
-        let _head_hash = self.head_hash().unwrap_or_default();
         let unpushed_hashes = self.unpushed_commit_hashes().unwrap_or_default();
 
         let mut commits = Vec::new();
@@ -131,7 +132,6 @@ impl GitCommands {
             return Ok(Vec::new());
         }
 
-        let _head_hash = self.head_hash().unwrap_or_default();
         let unpushed_hashes = self.unpushed_commit_hashes().unwrap_or_default();
 
         let mut commits = Vec::new();
@@ -232,14 +232,14 @@ impl GitCommands {
         Ok(commits)
     }
 
-    fn unpushed_commit_hashes(&self) -> Result<Vec<String>> {
+    fn unpushed_commit_hashes(&self) -> Result<HashSet<String>> {
         let result = self
             .git()
             .args(&["log", "@{u}..HEAD", "--format=%H"])
             .run()?;
 
         if !result.success {
-            return Ok(Vec::new());
+            return Ok(HashSet::new());
         }
 
         Ok(result.stdout.lines().map(String::from).collect())
