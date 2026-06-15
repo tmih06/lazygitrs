@@ -247,6 +247,18 @@ impl GitCommands {
         Ok(result.stdout)
     }
 
+    /// Diff the current branch (HEAD) against `branch`, showing what `branch`
+    /// would introduce if merged into HEAD — the symmetric-difference diff
+    /// (`HEAD...branch`, i.e. changes on `branch` since its merge-base with HEAD).
+    /// Lets the Branches panel preview a branch before merging it.
+    pub fn diff_branch_against_head(&self, branch: &str) -> Result<String> {
+        let result = self
+            .git()
+            .args(&["diff", "--color=never", &format!("HEAD...{branch}")])
+            .run_expecting_success()?;
+        Ok(result.stdout)
+    }
+
     /// Get the staged content of a file.
     #[allow(dead_code)]
     pub fn file_content_staged(&self, path: &str) -> Result<String> {

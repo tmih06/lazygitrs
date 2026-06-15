@@ -1710,6 +1710,50 @@ impl Gui {
                     self.diff_view.reset_keep_prefs();
                 }
             }
+            ContextId::Branches => {
+                // Branches: preview what the selected branch would bring if merged
+                // into the current branch (HEAD...branch), so you can compare a
+                // branch against the one you're on before merging it.
+                if let Some(branch) = model.branches.get(selected) {
+                    let name = branch.name.clone();
+                    let is_head = branch.head;
+                    drop(model);
+
+                    let git = Arc::clone(&self.git);
+                    let tx = self.diff_tx.clone();
+                    let gen_counter = Arc::clone(&self.diff_generation);
+
+                    self.diff_loading = true;
+                    self.diff_loading_since = Some(Instant::now());
+                    std::thread::spawn(move || {
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
+                        // The current branch has nothing to merge into itself, so
+                        // fall back to the info blurb (Branch/Hash/Upstream).
+                        let payload = if is_head {
+                            DiffPayload::Empty
+                        } else {
+                            match git.diff_branch_against_head(&name) {
+                                Ok(diff) if !diff.is_empty() => {
+                                    let filename = format!("HEAD...{name}");
+                                    DiffPayload::Parsed(DiffViewState::parse_diff_output(
+                                        &filename, &diff, 4, false,
+                                    ))
+                                }
+                                _ => DiffPayload::Empty,
+                            }
+                        };
+                        let _ = tx.send(DiffResult {
+                            generation,
+                            diff_key,
+                            payload,
+                        });
+                    });
+                } else {
+                    drop(model);
+                }
+            }
             ContextId::Commits => {
                 // Commits: load and parse async on background thread
                 if let Some(commit) = model.commits.get(selected) {
