@@ -108,7 +108,7 @@ fn handle_list_picker_mouse(
         MouseEventKind::Down(MouseButton::Left) => {
             // Click to select an item in the list picker
             let area = ratatui::layout::Rect::new(0, 0, layout_width, layout_height);
-            let popup_width = (area.width * 60 / 100).min(60).max(30);
+            let popup_width = (area.width * 60 / 100).clamp(30, 60);
             let max_popup = (area.height * 60 / 100).max(10);
             let popup_height = max_popup.min(area.height.saturating_sub(4));
             let x = (area.width.saturating_sub(popup_width)) / 2;
@@ -149,12 +149,11 @@ fn handle_list_picker_mouse(
                 let max_scroll = display.len().saturating_sub(list_height);
                 let effective_scroll = core.scroll_offset.min(max_scroll);
                 let display_idx = effective_scroll + row_in_list;
-                if let Some((is_header, item_idx)) = display.get(display_idx) {
-                    if !*is_header {
-                        if let Some(ei) = item_idx {
-                            core.selected = *ei;
-                        }
-                    }
+                if let Some((is_header, item_idx)) = display.get(display_idx)
+                    && !*is_header
+                    && let Some(ei) = item_idx
+                {
+                    core.selected = *ei;
                 }
             }
         }
@@ -343,10 +342,10 @@ impl DiffPreviewCache {
     }
 
     fn remove(&mut self, key: &str) {
-        if let Some(index) = self.entries.iter().position(|entry| entry.key == key) {
-            if let Some(entry) = self.entries.remove(index) {
-                self.estimated_bytes = self.estimated_bytes.saturating_sub(entry.estimated_bytes);
-            }
+        if let Some(index) = self.entries.iter().position(|entry| entry.key == key)
+            && let Some(entry) = self.entries.remove(index)
+        {
+            self.estimated_bytes = self.estimated_bytes.saturating_sub(entry.estimated_bytes);
         }
     }
 
@@ -391,6 +390,12 @@ fn estimate_diff_view_bytes(view: &DiffViewState) -> usize {
 
 type BackgroundJob = Box<dyn FnOnce() + Send>;
 
+/// One side's (lo, hi) line range in a side-by-side diff block.
+type Span = Option<(usize, usize)>;
+
+/// (old span, new span) pair for one matched side-by-side diff block.
+type SpanPair = (Span, Span);
+
 fn spawn_diff_scheduler(
     rx: mpsc::Receiver<DiffSchedulerEvent>,
     scheduler_tx: mpsc::Sender<DiffSchedulerEvent>,
@@ -421,16 +426,16 @@ fn spawn_diff_scheduler(
                 }
                 DiffSchedulerEvent::Complete => {
                     active_jobs = active_jobs.saturating_sub(1);
-                    if let Some(job) = pending_job.take() {
-                        if generation.load(Ordering::Relaxed) == job.generation {
-                            active_jobs += 1;
-                            spawn_diff_job(
-                                job,
-                                result_tx.clone(),
-                                scheduler_tx.clone(),
-                                Arc::clone(&generation),
-                            );
-                        }
+                    if let Some(job) = pending_job.take()
+                        && generation.load(Ordering::Relaxed) == job.generation
+                    {
+                        active_jobs += 1;
+                        spawn_diff_job(
+                            job,
+                            result_tx.clone(),
+                            scheduler_tx.clone(),
+                            Arc::clone(&generation),
+                        );
                     }
                 }
             }
@@ -482,7 +487,6 @@ struct DiffPrefetchJob {
 /// Every job MUST produce a result — even a stale-generation one whose load
 /// is skipped — because `diff_prefetch_inflight` is only cleared when the
 /// result arrives.
-
 fn spawn_diff_prefetch_workers(
     rx: mpsc::Receiver<DiffPrefetchJob>,
     result_tx: mpsc::Sender<DiffResult>,
@@ -917,16 +921,16 @@ fn parse_file_diff_payload(
             git.file_content(current_path)
                 .or_else(|_| git.file_content_staged(current_path))
         };
-        if let Ok(content) = content {
-            if !content.is_empty() {
-                return DiffPayload::Parsed(DiffViewState::parse_content(
-                    current_path,
-                    &content,
-                    &content,
-                    4,
-                    exists,
-                ));
-            }
+        if let Ok(content) = content
+            && !content.is_empty()
+        {
+            return DiffPayload::Parsed(DiffViewState::parse_content(
+                current_path,
+                &content,
+                &content,
+                4,
+                exists,
+            ));
         }
     }
     DiffPayload::Parsed(DiffViewState::parse_diff_output(name, diff, 4, exists))
@@ -939,18 +943,17 @@ fn parse_commit_file_diff_payload(
     current_path: &str,
     diff: &str,
 ) -> DiffPayload {
-    if is_rename_only_diff(diff) {
-        if let Ok(content) = git.file_content_at_commit(hash, current_path) {
-            if !content.is_empty() {
-                return DiffPayload::Parsed(DiffViewState::parse_content(
-                    current_path,
-                    &content,
-                    &content,
-                    4,
-                    false,
-                ));
-            }
-        }
+    if is_rename_only_diff(diff)
+        && let Ok(content) = git.file_content_at_commit(hash, current_path)
+        && !content.is_empty()
+    {
+        return DiffPayload::Parsed(DiffViewState::parse_content(
+            current_path,
+            &content,
+            &content,
+            4,
+            false,
+        ));
     }
     DiffPayload::Parsed(DiffViewState::parse_diff_output(name, diff, 4, false))
 }
@@ -1016,12 +1019,13 @@ impl Gui {
         spawn_latest_background_worker(commit_details_job_rx);
         // Tree-sitter highlight queries compile per-language on first use —
         // no eager warm-up (that burned ~0.4s of startup CPU for languages
-        // the session may never display).
-        let mut model = Model::default();
-        model.repo_name = git.repo_name();
         let (head_hash, head_branch) = git.head_info().unwrap_or_default();
-        model.head_hash = head_hash;
-        model.head_branch_name = head_branch;
+        let model = Model {
+            repo_name: git.repo_name(),
+            head_hash,
+            head_branch_name: head_branch,
+            ..Model::default()
+        };
 
         // External-change watcher (lazygit's startBackgroundExternalChangeDetection):
         // one long-lived thread polling `git show-ref`+HEAD on a timer. A
@@ -1576,14 +1580,13 @@ impl Gui {
                     // Re-apply filters / selection-dependent views after stream
                     // completes (initial load and background refresh). Needed so
                     // startup `-f/--filter` takes effect once commits arrive.
-                    if was_refresh
+                    if (was_refresh
                         || self.commit_path_filter.is_some()
                         || !self.commit_branch_filter.is_empty()
-                        || !self.commit_author_filter.is_empty()
+                        || !self.commit_author_filter.is_empty())
+                        && let Err(err) = self.after_model_refresh()
                     {
-                        if let Err(err) = self.after_model_refresh() {
-                            self.show_error("Refresh failed", err);
-                        }
+                        self.show_error("Refresh failed", err);
                     }
                 }
             }
@@ -1953,7 +1956,7 @@ impl Gui {
         self.layout.update_size(w, h);
         // Re-flow any active commit-message textarea to the new width so
         // wrapping stays consistent with what the user sees.
-        let popup_width = (w * 60 / 100).min(60).max(30).min(w);
+        let popup_width = (w * 60 / 100).clamp(30, 60).min(w);
         let popup_inner = popup_width.saturating_sub(4) as usize;
         let config_width = self.config.user_config.git.commit.auto_wrap_width;
         let effective_width = if config_width > 0 {
@@ -1988,10 +1991,8 @@ impl Gui {
                 body_textarea,
                 body_state,
                 ..
-            } => {
-                if effective_width > 0 {
-                    body_state.render_into(body_textarea, effective_width);
-                }
+            } if effective_width > 0 => {
+                body_state.render_into(body_textarea, effective_width);
             }
             _ => {}
         }
@@ -2028,14 +2029,13 @@ impl Gui {
                     self.apply_diff_payload(result.diff_key, result.payload);
                 } else if result.diff_key != self.last_diff_key
                     && result.diff_key != self.displayed_diff_key
+                    && let DiffPayload::Parsed(parsed) = result.payload
                 {
-                    if let DiffPayload::Parsed(parsed) = result.payload {
-                        let mut view = DiffViewState::new();
-                        view.wrap = self.diff_view.wrap;
-                        view.view_layout = self.diff_view.view_layout;
-                        view.apply_parsed(parsed);
-                        self.diff_preview_cache.insert(result.diff_key, view);
-                    }
+                    let mut view = DiffViewState::new();
+                    view.wrap = self.diff_view.wrap;
+                    view.view_layout = self.diff_view.view_layout;
+                    view.apply_parsed(parsed);
+                    self.diff_preview_cache.insert(result.diff_key, view);
                 }
                 continue;
             }
@@ -2457,23 +2457,21 @@ impl Gui {
             if generation_counter.load(Ordering::Relaxed) != generation {
                 return;
             }
-            if !stat_cached {
-                if let Ok(stat) = git.commit_stat(&hash) {
-                    if let Ok(mut cache) = stat_cache.lock() {
-                        cache.insert(hash.clone(), stat);
-                    }
-                }
+            if !stat_cached
+                && let Ok(stat) = git.commit_stat(&hash)
+                && let Ok(mut cache) = stat_cache.lock()
+            {
+                cache.insert(hash.clone(), stat);
             }
 
             if generation_counter.load(Ordering::Relaxed) != generation {
                 return;
             }
-            if !message_cached {
-                if let Ok(message) = git.commit_message_full(&hash) {
-                    if let Ok(mut cache) = message_cache.lock() {
-                        cache.insert(hash, message);
-                    }
-                }
+            if !message_cached
+                && let Ok(message) = git.commit_message_full(&hash)
+                && let Ok(mut cache) = message_cache.lock()
+            {
+                cache.insert(hash, message);
             }
             let _ = done_tx.send(());
         }));
@@ -5408,10 +5406,10 @@ impl Gui {
                     // Arrow keys only for navigation — j/k must type into the search filter
                     // (same pattern as ListPicker / CommandPalette / ThemePicker).
                     KeyCode::Down if key.modifiers.is_empty() => {
-                        if let PopupState::Checklist { selected, .. } = &mut self.popup {
-                            if visible_count > 0 {
-                                *selected = (*selected + 1).min(visible_count - 1);
-                            }
+                        if let PopupState::Checklist { selected, .. } = &mut self.popup
+                            && visible_count > 0
+                        {
+                            *selected = (*selected + 1).min(visible_count - 1);
                         }
                     }
                     KeyCode::Up if key.modifiers.is_empty() => {
@@ -5777,14 +5775,14 @@ impl Gui {
                         return Ok(());
                     };
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
-                    if let PopupState::ListPicker { on_confirm, .. } = popup {
-                        if let Err(e) = on_confirm(self, &value) {
-                            self.popup = PopupState::Message {
-                                title: "Error".to_string(),
-                                message: format!("{}", e),
-                                kind: MessageKind::Error,
-                            };
-                        }
+                    if let PopupState::ListPicker { on_confirm, .. } = popup
+                        && let Err(e) = on_confirm(self, &value)
+                    {
+                        self.popup = PopupState::Message {
+                            title: "Error".to_string(),
+                            message: format!("{}", e),
+                            kind: MessageKind::Error,
+                        };
                     }
                     return Ok(());
                 }
@@ -7550,32 +7548,30 @@ impl Gui {
             let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
             if let Some(visible_idx) =
                 views::checklist_item_at(&self.popup, area, mouse.column, mouse.row)
-            {
-                if let PopupState::Checklist {
+                && let PopupState::Checklist {
                     items,
                     selected,
                     search_textarea,
                     ..
                 } = &mut self.popup
-                {
-                    if *selected == visible_idx {
-                        let search = search_textarea.lines().join("");
-                        let visible_indices: Vec<usize> = items
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, it)| {
-                                it.is_free_entry
-                                    || search.is_empty()
-                                    || it.label.to_lowercase().contains(&search.to_lowercase())
-                            })
-                            .map(|(i, _)| i)
-                            .collect();
-                        if let Some(&real_idx) = visible_indices.get(visible_idx) {
-                            items[real_idx].checked = !items[real_idx].checked;
-                        }
-                    } else {
-                        *selected = visible_idx;
+            {
+                if *selected == visible_idx {
+                    let search = search_textarea.lines().join("");
+                    let visible_indices: Vec<usize> = items
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, it)| {
+                            it.is_free_entry
+                                || search.is_empty()
+                                || it.label.to_lowercase().contains(&search.to_lowercase())
+                        })
+                        .map(|(i, _)| i)
+                        .collect();
+                    if let Some(&real_idx) = visible_indices.get(visible_idx) {
+                        items[real_idx].checked = !items[real_idx].checked;
                     }
+                } else {
+                    *selected = visible_idx;
                 }
             }
             return;
@@ -8479,22 +8475,21 @@ impl Gui {
         hunk_idx: usize,
         side_diff: &str,
         new_side: bool,
-    ) -> Vec<(Option<(usize, usize)>, Option<(usize, usize)>)> {
+    ) -> Vec<SpanPair> {
         use crate::pager::side_by_side::DiffViewState as DVS;
         let view_spans = DVS::block_spans(&self.diff_view.lines, &self.diff_view.hunk_line_offsets);
         let Some(view) = view_spans.get(hunk_idx) else {
             return Vec::new();
         };
-        let mut matched: Vec<(usize, Option<(usize, usize)>, Option<(usize, usize)>)> =
-            DVS::block_spans_for_diff(side_diff, 4)
-                .into_iter()
-                .filter(|s| view.overlaps(s, new_side))
-                .map(|s| {
-                    let anchor = s.old.map(|(lo, _)| lo).unwrap_or(s.old_point);
-                    (anchor, s.old, s.new)
-                })
-                .collect();
-        matched.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut matched: Vec<(usize, Span, Span)> = DVS::block_spans_for_diff(side_diff, 4)
+            .into_iter()
+            .filter(|s| view.overlaps(s, new_side))
+            .map(|s| {
+                let anchor = s.old.map(|(lo, _)| lo).unwrap_or(s.old_point);
+                (anchor, s.old, s.new)
+            })
+            .collect();
+        matched.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         matched
             .into_iter()
             .map(|(_, old, new)| (old, new))
@@ -9338,6 +9333,106 @@ impl Command for EnableMouseCaptureWithoutHover {
     }
 }
 
+fn setup_terminal() -> Result<(Term, bool)> {
+    terminal::enable_raw_mode()?;
+    // Prefer /dev/tty when stdout is piped (Helix `:insert-output`, etc.).
+    let mut out =
+        crate::os::tty::open_tui_output().context("Failed to open terminal output for TUI")?;
+    execute!(
+        out,
+        EnterAlternateScreen,
+        EnableMouseCaptureWithoutHover,
+        crossterm::event::EnableFocusChange,
+        crossterm::event::EnableBracketedPaste,
+        cursor::Hide
+    )?;
+    // Helix leaves progressive kitty keyboard enhancement enabled across
+    // `:insert-output` and keeps a `/dev/tty` EventStream open. Probing races
+    // that reader (blank hang); instead pop leftover stacks and push our flags
+    // so CSI-u keys parse as KeyEvents.
+    let keyboard_enhanced = if crate::os::tty::nested_tty_launch() {
+        for _ in 0..4 {
+            let _ = execute!(out, crossterm::event::PopKeyboardEnhancementFlags);
+        }
+        true
+    } else {
+        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+    };
+    if keyboard_enhanced {
+        execute!(
+            out,
+            crossterm::event::PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
+        )?;
+    }
+    let backend = CrosstermBackend::new(out);
+    let terminal = Terminal::new(backend)?;
+    Ok((terminal, keyboard_enhanced))
+}
+
+/// Put the terminal back the way we found it.
+///
+/// Nothing drains leftover input here: crossterm guards its reader with a
+/// process-wide mutex that the input thread holds for the duration of its
+/// blocking read, so any drain from this thread would silently no-op.
+fn restore_terminal(terminal: &mut Term, keyboard_enhanced: bool) -> Result<()> {
+    // Helix `:insert-output` keeps its own alt-screen / raw mode / mouse / focus
+    // / bracketed-paste / kitty stack across the child. If we tear those down
+    // here, Helix resumes drawing into a world that no longer exists and the
+    // user is left staring at the primary-screen `hx` launch line with a dead
+    // TUI. Nested exit must only undo *our* transient state and hand the tty
+    // foreground back.
+    let nested = crate::os::tty::nested_tty_launch();
+    if nested {
+        // Hide our cursor leftovers, pop the kitty flags we pushed, then put
+        // Helix's progressive flags back (DISAMBIGUATE | REPORT_ALTERNATE_KEYS).
+        execute!(terminal.backend_mut(), cursor::Show)?;
+        if keyboard_enhanced {
+            execute!(
+                terminal.backend_mut(),
+                crossterm::event::PopKeyboardEnhancementFlags
+            )?;
+            execute!(
+                terminal.backend_mut(),
+                crossterm::event::PushKeyboardEnhancementFlags(
+                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                )
+            )?;
+        }
+        terminal.backend_mut().flush()?;
+        crate::os::tty::restore_foreground_tty();
+        return Ok(());
+    }
+
+    // Standalone / non-nested: full teardown.
+    crate::os::tty::restore_foreground_tty();
+    if keyboard_enhanced {
+        execute!(
+            terminal.backend_mut(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
+            crossterm::event::PopKeyboardEnhancementFlags,
+            crossterm::event::DisableBracketedPaste,
+            cursor::Show,
+            LeaveAlternateScreen
+        )?;
+    } else {
+        execute!(
+            terminal.backend_mut(),
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
+            crossterm::event::DisableBracketedPaste,
+            cursor::Show,
+            LeaveAlternateScreen
+        )?;
+    }
+    terminal.backend_mut().flush()?;
+
+    terminal::disable_raw_mode()?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod terminal_mouse_tests {
     use super::*;
@@ -9601,104 +9696,4 @@ mod terminal_mouse_tests {
         }
         assert_eq!(keys.len(), 9);
     }
-}
-
-fn setup_terminal() -> Result<(Term, bool)> {
-    terminal::enable_raw_mode()?;
-    // Prefer /dev/tty when stdout is piped (Helix `:insert-output`, etc.).
-    let mut out =
-        crate::os::tty::open_tui_output().context("Failed to open terminal output for TUI")?;
-    execute!(
-        out,
-        EnterAlternateScreen,
-        EnableMouseCaptureWithoutHover,
-        crossterm::event::EnableFocusChange,
-        crossterm::event::EnableBracketedPaste,
-        cursor::Hide
-    )?;
-    // Helix leaves progressive kitty keyboard enhancement enabled across
-    // `:insert-output` and keeps a `/dev/tty` EventStream open. Probing races
-    // that reader (blank hang); instead pop leftover stacks and push our flags
-    // so CSI-u keys parse as KeyEvents.
-    let keyboard_enhanced = if crate::os::tty::nested_tty_launch() {
-        for _ in 0..4 {
-            let _ = execute!(out, crossterm::event::PopKeyboardEnhancementFlags);
-        }
-        true
-    } else {
-        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
-    };
-    if keyboard_enhanced {
-        execute!(
-            out,
-            crossterm::event::PushKeyboardEnhancementFlags(keyboard_enhancement_flags())
-        )?;
-    }
-    let backend = CrosstermBackend::new(out);
-    let terminal = Terminal::new(backend)?;
-    Ok((terminal, keyboard_enhanced))
-}
-
-/// Put the terminal back the way we found it.
-///
-/// Nothing drains leftover input here: crossterm guards its reader with a
-/// process-wide mutex that the input thread holds for the duration of its
-/// blocking read, so any drain from this thread would silently no-op.
-fn restore_terminal(terminal: &mut Term, keyboard_enhanced: bool) -> Result<()> {
-    // Helix `:insert-output` keeps its own alt-screen / raw mode / mouse / focus
-    // / bracketed-paste / kitty stack across the child. If we tear those down
-    // here, Helix resumes drawing into a world that no longer exists and the
-    // user is left staring at the primary-screen `hx` launch line with a dead
-    // TUI. Nested exit must only undo *our* transient state and hand the tty
-    // foreground back.
-    let nested = crate::os::tty::nested_tty_launch();
-    if nested {
-        // Hide our cursor leftovers, pop the kitty flags we pushed, then put
-        // Helix's progressive flags back (DISAMBIGUATE | REPORT_ALTERNATE_KEYS).
-        execute!(terminal.backend_mut(), cursor::Show)?;
-        if keyboard_enhanced {
-            execute!(
-                terminal.backend_mut(),
-                crossterm::event::PopKeyboardEnhancementFlags
-            )?;
-            execute!(
-                terminal.backend_mut(),
-                crossterm::event::PushKeyboardEnhancementFlags(
-                    crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                        | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                )
-            )?;
-        }
-        terminal.backend_mut().flush()?;
-        crate::os::tty::restore_foreground_tty();
-        return Ok(());
-    }
-
-    // Standalone / non-nested: full teardown.
-    crate::os::tty::restore_foreground_tty();
-    if keyboard_enhanced {
-        execute!(
-            terminal.backend_mut(),
-            crossterm::event::DisableMouseCapture,
-            crossterm::event::DisableFocusChange,
-            crossterm::event::PopKeyboardEnhancementFlags,
-            crossterm::event::DisableBracketedPaste,
-            cursor::Show,
-            LeaveAlternateScreen
-        )?;
-    } else {
-        execute!(
-            terminal.backend_mut(),
-            crossterm::event::DisableMouseCapture,
-            crossterm::event::DisableFocusChange,
-            crossterm::event::DisableBracketedPaste,
-            cursor::Show,
-            LeaveAlternateScreen
-        )?;
-    }
-    terminal.backend_mut().flush()?;
-
-    terminal::disable_raw_mode()?;
-
-    Ok(())
 }

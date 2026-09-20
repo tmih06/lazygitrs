@@ -359,10 +359,10 @@ fn fetch_and_checkout(
     let msg = format!("Fetching {}...", remote_name);
     gui.start_remote_op("Fetch", &msg, move |git| {
         git.fetch(&remote_name)?;
-        if let Some(branch) = branch_to_checkout.as_deref() {
-            if !branch.is_empty() {
-                git.checkout_remote_branch(&remote_name, branch)?;
-            }
+        if let Some(branch) = branch_to_checkout.as_deref()
+            && !branch.is_empty()
+        {
+            git.checkout_remote_branch(&remote_name, branch)?;
         }
         Ok(())
     });

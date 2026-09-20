@@ -392,10 +392,10 @@ pub struct ThemeJson {
 
 impl ThemeJson {
     pub fn resolved_appearance(&self) -> ThemeAppearance {
-        if let Some(raw) = self.appearance.as_deref() {
-            if let Some(parsed) = ThemeAppearance::parse(raw) {
-                return parsed;
-            }
+        if let Some(raw) = self.appearance.as_deref()
+            && let Some(parsed) = ThemeAppearance::parse(raw)
+        {
+            return parsed;
         }
         self.background
             .as_deref()

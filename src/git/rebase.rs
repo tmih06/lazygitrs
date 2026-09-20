@@ -88,10 +88,10 @@ impl GitCommands {
         let grandparent = self.commit_parent(&parent)?;
         let range = self.rebase_commit_range(&grandparent)?; // newest-first
         let mut oldest_first: Vec<String> = range.into_iter().rev().collect();
-        if let Some(idx) = oldest_first.iter().position(|h| h == commit_hash) {
-            if idx + 1 < oldest_first.len() {
-                oldest_first.swap(idx, idx + 1);
-            }
+        if let Some(idx) = oldest_first.iter().position(|h| h == commit_hash)
+            && idx + 1 < oldest_first.len()
+        {
+            oldest_first.swap(idx, idx + 1);
         }
         let actions: Vec<(String, RebaseAction)> = oldest_first
             .into_iter()
@@ -106,10 +106,10 @@ impl GitCommands {
         let grandparent = self.commit_parent(&parent)?;
         let range = self.rebase_commit_range(&grandparent)?;
         let mut oldest_first: Vec<String> = range.into_iter().rev().collect();
-        if let Some(idx) = oldest_first.iter().position(|h| h == commit_hash) {
-            if idx > 0 {
-                oldest_first.swap(idx, idx - 1);
-            }
+        if let Some(idx) = oldest_first.iter().position(|h| h == commit_hash)
+            && idx > 0
+        {
+            oldest_first.swap(idx, idx - 1);
         }
         let actions: Vec<(String, RebaseAction)> = oldest_first
             .into_iter()

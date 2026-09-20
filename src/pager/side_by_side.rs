@@ -694,23 +694,22 @@ impl DiffViewState {
             }
             let mut old_range: Option<(usize, usize)> = None;
             let mut new_range: Option<(usize, usize)> = None;
-            for idx in start..end {
-                let line = &lines[idx];
-                if matches!(line.change_type, ChangeType::Delete | ChangeType::Modified) {
-                    if let Some(n) = file_num(idx, false) {
-                        old_range = Some(match old_range {
-                            None => (n, n),
-                            Some((lo, hi)) => (lo.min(n), hi.max(n)),
-                        });
-                    }
+            for (idx, line) in lines.iter().enumerate().take(end).skip(start) {
+                if matches!(line.change_type, ChangeType::Delete | ChangeType::Modified)
+                    && let Some(n) = file_num(idx, false)
+                {
+                    old_range = Some(match old_range {
+                        None => (n, n),
+                        Some((lo, hi)) => (lo.min(n), hi.max(n)),
+                    });
                 }
-                if matches!(line.change_type, ChangeType::Insert | ChangeType::Modified) {
-                    if let Some(n) = file_num(idx, true) {
-                        new_range = Some(match new_range {
-                            None => (n, n),
-                            Some((lo, hi)) => (lo.min(n), hi.max(n)),
-                        });
-                    }
+                if matches!(line.change_type, ChangeType::Insert | ChangeType::Modified)
+                    && let Some(n) = file_num(idx, true)
+                {
+                    new_range = Some(match new_range {
+                        None => (n, n),
+                        Some((lo, hi)) => (lo.min(n), hi.max(n)),
+                    });
                 }
             }
             let gap_point = |new_side: bool| -> usize {
@@ -1630,28 +1629,26 @@ pub fn render_diff(
         filename = truncate_front_ellipsis(&filename, filename_budget);
     }
     let mut title_spans = vec![Span::raw(format!("{leading}{filename}{side_label}"))];
-    if keep_counts {
-        if let Some((s, u)) = state.staged_counts() {
-            // Zero counts mute to dimmed so the nonzero side pops.
-            let staged_fg = if s == 0 {
-                theme.text_dimmed
-            } else {
-                theme.file_staged.fg.unwrap_or(theme.text_dimmed)
-            };
-            let unstaged_fg = if u == 0 {
-                theme.text_dimmed
-            } else {
-                theme.file_unstaged.fg.unwrap_or(theme.text_dimmed)
-            };
-            title_spans.push(Span::styled(
-                format!(" {s} Staged"),
-                Style::default().fg(staged_fg),
-            ));
-            title_spans.push(Span::styled(
-                format!(" {u} Unstaged"),
-                Style::default().fg(unstaged_fg),
-            ));
-        }
+    if keep_counts && let Some((s, u)) = state.staged_counts() {
+        // Zero counts mute to dimmed so the nonzero side pops.
+        let staged_fg = if s == 0 {
+            theme.text_dimmed
+        } else {
+            theme.file_staged.fg.unwrap_or(theme.text_dimmed)
+        };
+        let unstaged_fg = if u == 0 {
+            theme.text_dimmed
+        } else {
+            theme.file_unstaged.fg.unwrap_or(theme.text_dimmed)
+        };
+        title_spans.push(Span::styled(
+            format!(" {s} Staged"),
+            Style::default().fg(staged_fg),
+        ));
+        title_spans.push(Span::styled(
+            format!(" {u} Unstaged"),
+            Style::default().fg(unstaged_fg),
+        ));
     }
     title_spans.push(Span::raw(trailing.to_string()));
     let title = Line::from(title_spans);
@@ -3354,10 +3351,10 @@ fn parse_multi_file_diff(diff: &str) -> Vec<(String, &str)> {
         line_start = line_end + 1;
     }
 
-    if let Some(start) = section_start {
-        if !current_filename.is_empty() {
-            sections.push((current_filename, &diff[start..]));
-        }
+    if let Some(start) = section_start
+        && !current_filename.is_empty()
+    {
+        sections.push((current_filename, &diff[start..]));
     }
 
     sections
@@ -3380,7 +3377,7 @@ fn build_file_sections_parallel(section_meta: &[(&str, &str)]) -> Vec<FileSectio
         .unwrap_or(4)
         .min(n)
         .max(1);
-    let chunk = (n + workers - 1) / workers;
+    let chunk = n.div_ceil(workers);
     let mut handles = Vec::with_capacity(workers);
 
     for w in 0..workers {
@@ -3465,10 +3462,11 @@ fn parse_unified_diff(diff: &str) -> (String, String) {
         }
     }
 
-    if old_lines.is_empty() && new_lines.is_empty() {
-        if let Some((old_path, new_path)) = rename_only_paths(diff) {
-            return (old_path, new_path);
-        }
+    if old_lines.is_empty()
+        && new_lines.is_empty()
+        && let Some((old_path, new_path)) = rename_only_paths(diff)
+    {
+        return (old_path, new_path);
     }
 
     (old_lines.join("\n"), new_lines.join("\n"))

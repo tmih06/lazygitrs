@@ -387,10 +387,10 @@ pub fn render(
                 }
             }
             // Highlight `/` search matches on the full-mode list.
-            if let Some((query, _, _)) = search_state {
-                if !query.is_empty() {
-                    render_list_search_highlights(frame, fl.main_panel, query, theme);
-                }
+            if let Some((query, _, _)) = search_state
+                && !query.is_empty()
+            {
+                render_list_search_highlights(frame, fl.main_panel, query, theme);
             }
         }
         // Full-mode details strip (sidebar-focused only) — compact, above sidebar.
@@ -1020,12 +1020,11 @@ pub fn render(
 
     // Highlight `/` search matches on the active list (lazygit-style substring).
     // Applied after list widgets paint so selection styles stay intact.
-    if let Some((query, _, _)) = search_state {
-        if !query.is_empty() {
-            if let Some(list_rect) = fl.side_panels.get(active_panel_index).copied() {
-                render_list_search_highlights(frame, list_rect, query, theme);
-            }
-        }
+    if let Some((query, _, _)) = search_state
+        && !query.is_empty()
+        && let Some(list_rect) = fl.side_panels.get(active_panel_index).copied()
+    {
+        render_list_search_highlights(frame, list_rect, query, theme);
     }
 
     // Render main panel (skipped when side panel is fully expanded)
@@ -1266,7 +1265,7 @@ fn clamped_popup_height(line_count: usize, fixed_rows: u16, area_height: u16) ->
 }
 
 fn centered_popup_x_width(area: Rect) -> (u16, u16) {
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let popup_width = (area.width * 60 / 100).clamp(30, 60).min(area.width);
     let x = (area.width.saturating_sub(popup_width)) / 2;
     (x, popup_width)
 }
@@ -1349,142 +1348,6 @@ pub fn checklist_item_at(popup: &PopupState, area: Rect, col: u16, row: u16) -> 
     }
     let idx = (row - list_start) as usize;
     if idx < visible_count { Some(idx) } else { None }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{checklist_item_at, command_log_geometry, menu_item_at, render_popup};
-    use crate::config::Theme;
-    use crate::gui::popup::{ChecklistItem, MenuItem, MessageKind, PopupState};
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    use ratatui::layout::Rect;
-
-    #[test]
-    fn command_log_is_hidden_when_main_panel_is_absent() {
-        assert_eq!(command_log_geometry(Rect::default(), 1), None);
-    }
-
-    #[test]
-    fn command_log_visible_lines_are_clamped_to_short_main_panel() {
-        let (rect, visible_lines) =
-            command_log_geometry(Rect::new(10, 4, 80, 2), 5).expect("log should fit");
-
-        assert_eq!(visible_lines, 1);
-        assert_eq!(rect, Rect::new(40, 4, 50, 3));
-    }
-
-    #[test]
-    fn long_error_message_popup_renders_in_short_terminal() {
-        let backend = TestBackend::new(40, 8);
-        let mut terminal = Terminal::new(backend).expect("test terminal");
-        let message = (0..40)
-            .map(|i| {
-                format!(
-                    "hint: divergent branches need reconciliation before pull can continue ({i})"
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let popup = PopupState::Message {
-            title: "Pull error".to_string(),
-            message,
-            kind: MessageKind::Error,
-        };
-
-        terminal
-            .draw(|frame| {
-                render_popup(
-                    frame,
-                    &popup,
-                    Rect::new(0, 0, 40, 8),
-                    0,
-                    &Theme::default(),
-                    false,
-                    false,
-                );
-            })
-            .expect("long popup message should render without panicking");
-    }
-
-    fn sample_menu() -> PopupState {
-        PopupState::Menu {
-            title: "Copy".to_string(),
-            items: vec![
-                MenuItem {
-                    label: "commit hash".to_string(),
-                    description: String::new(),
-                    key: Some("c".to_string()),
-                    action: None,
-                },
-                MenuItem {
-                    label: "commit message".to_string(),
-                    description: String::new(),
-                    key: Some("m".to_string()),
-                    action: None,
-                },
-                MenuItem {
-                    label: "author name".to_string(),
-                    description: String::new(),
-                    key: Some("a".to_string()),
-                    action: None,
-                },
-            ],
-            selected: 0,
-            loading_index: None,
-        }
-    }
-
-    #[test]
-    fn menu_item_at_hits_first_and_second_options() {
-        let area = Rect::new(0, 0, 80, 24);
-        let popup = sample_menu();
-        // height = 3 items + 2 borders = 5; y = (24-5)/2 = 9; list starts at y+1 = 10
-        let x = (area
-            .width
-            .saturating_sub((area.width * 60 / 100).min(60).max(30)))
-            / 2
-            + 2;
-        assert_eq!(menu_item_at(&popup, area, x, 10), Some(0));
-        assert_eq!(menu_item_at(&popup, area, x, 11), Some(1));
-        assert_eq!(menu_item_at(&popup, area, x, 12), Some(2));
-        assert_eq!(menu_item_at(&popup, area, x, 9), None); // border
-        assert_eq!(menu_item_at(&popup, area, x, 13), None); // below
-    }
-
-    #[test]
-    fn checklist_item_at_skips_search_and_separator() {
-        let area = Rect::new(0, 0, 80, 30);
-        let popup = PopupState::Checklist {
-            title: "Pick".to_string(),
-            items: vec![
-                ChecklistItem {
-                    label: "one".to_string(),
-                    checked: false,
-                    is_free_entry: false,
-                },
-                ChecklistItem {
-                    label: "two".to_string(),
-                    checked: true,
-                    is_free_entry: false,
-                },
-            ],
-            selected: 0,
-            search_textarea: crate::gui::popup::make_checklist_search_textarea(),
-            free_entry_category: None,
-            on_confirm: Box::new(|_gui, _ids| Ok(())),
-        };
-        // height = max(8, 2+6)=8; y=(30-8)/2=11; list_start=y+1+2=14
-        let x = (area
-            .width
-            .saturating_sub((area.width * 60 / 100).min(60).max(30)))
-            / 2
-            + 2;
-        assert_eq!(checklist_item_at(&popup, area, x, 14), Some(0));
-        assert_eq!(checklist_item_at(&popup, area, x, 15), Some(1));
-        assert_eq!(checklist_item_at(&popup, area, x, 12), None); // search row
-        assert_eq!(checklist_item_at(&popup, area, x, 13), None); // separator
-    }
 }
 /// Build a window title like " 4 Commit Files (abc1234 feat: some change) ".
 fn build_branch_commits_title<'a>(branch_name: &str, theme: &Theme) -> Line<'a> {
@@ -2056,6 +1919,7 @@ fn render_list_search_highlights(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_list_with_range_raw(
     frame: &mut Frame,
     rect: Rect,
@@ -2227,6 +2091,7 @@ fn get_info_content<'a>(model: &Model, ctx_mgr: &ContextManager) -> Vec<Line<'a>
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_search_bar_or_status_bar(
     frame: &mut Frame,
     status_bar: Rect,
@@ -2299,6 +2164,7 @@ fn render_search_bar_or_status_bar(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_status_bar(
     frame: &mut Frame,
     rect: Rect,
@@ -3560,22 +3426,21 @@ pub fn render_popup(
                         let mut s = Vec::new();
                         let mut cursor = 0usize;
                         for (start, end) in ranges {
-                            if start > cursor {
-                                if let Some(chunk) = text.get(cursor..start) {
-                                    if !chunk.is_empty() {
-                                        s.push(Span::styled(chunk.to_string(), base));
-                                    }
-                                }
+                            if start > cursor
+                                && let Some(chunk) = text.get(cursor..start)
+                                && !chunk.is_empty()
+                            {
+                                s.push(Span::styled(chunk.to_string(), base));
                             }
                             if let Some(chunk) = text.get(start..end) {
                                 s.push(Span::styled(chunk.to_string(), highlight_style));
                             }
                             cursor = end;
                         }
-                        if let Some(rest) = text.get(cursor..) {
-                            if !rest.is_empty() {
-                                s.push(Span::styled(rest.to_string(), base));
-                            }
+                        if let Some(rest) = text.get(cursor..)
+                            && !rest.is_empty()
+                        {
+                            s.push(Span::styled(rest.to_string(), base));
                         }
                         s
                     };
@@ -3902,22 +3767,21 @@ fn render_list_picker(
                     let base_style = Style::default().fg(base_fg);
                     let mut cursor = 0usize;
                     for (s, e) in ranges {
-                        if s > cursor {
-                            if let Some(chunk) = label.get(cursor..s) {
-                                if !chunk.is_empty() {
-                                    spans.push(Span::styled(chunk.to_string(), base_style));
-                                }
-                            }
+                        if s > cursor
+                            && let Some(chunk) = label.get(cursor..s)
+                            && !chunk.is_empty()
+                        {
+                            spans.push(Span::styled(chunk.to_string(), base_style));
                         }
                         if let Some(chunk) = label.get(s..e) {
                             spans.push(Span::styled(chunk.to_string(), match_style));
                         }
                         cursor = e;
                     }
-                    if let Some(rest) = label.get(cursor..) {
-                        if !rest.is_empty() {
-                            spans.push(Span::styled(rest.to_string(), base_style));
-                        }
+                    if let Some(rest) = label.get(cursor..)
+                        && !rest.is_empty()
+                    {
+                        spans.push(Span::styled(rest.to_string(), base_style));
                     }
                 }
             } else {
@@ -4015,6 +3879,7 @@ fn find_commit_by_hash<'a>(model: &'a Model, hash: &str) -> Option<&'a Commit> {
         .or_else(|| model.reflog_commits.iter().find(|c| c.hash == hash))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_commit_details_panel(
     frame: &mut Frame,
     rect: Rect,
@@ -4043,4 +3908,140 @@ fn render_commit_details_panel(
         compact,
         scroll,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{checklist_item_at, command_log_geometry, menu_item_at, render_popup};
+    use crate::config::Theme;
+    use crate::gui::popup::{ChecklistItem, MenuItem, MessageKind, PopupState};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn command_log_is_hidden_when_main_panel_is_absent() {
+        assert_eq!(command_log_geometry(Rect::default(), 1), None);
+    }
+
+    #[test]
+    fn command_log_visible_lines_are_clamped_to_short_main_panel() {
+        let (rect, visible_lines) =
+            command_log_geometry(Rect::new(10, 4, 80, 2), 5).expect("log should fit");
+
+        assert_eq!(visible_lines, 1);
+        assert_eq!(rect, Rect::new(40, 4, 50, 3));
+    }
+
+    #[test]
+    fn long_error_message_popup_renders_in_short_terminal() {
+        let backend = TestBackend::new(40, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let message = (0..40)
+            .map(|i| {
+                format!(
+                    "hint: divergent branches need reconciliation before pull can continue ({i})"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let popup = PopupState::Message {
+            title: "Pull error".to_string(),
+            message,
+            kind: MessageKind::Error,
+        };
+
+        terminal
+            .draw(|frame| {
+                render_popup(
+                    frame,
+                    &popup,
+                    Rect::new(0, 0, 40, 8),
+                    0,
+                    &Theme::default(),
+                    false,
+                    false,
+                );
+            })
+            .expect("long popup message should render without panicking");
+    }
+
+    fn sample_menu() -> PopupState {
+        PopupState::Menu {
+            title: "Copy".to_string(),
+            items: vec![
+                MenuItem {
+                    label: "commit hash".to_string(),
+                    description: String::new(),
+                    key: Some("c".to_string()),
+                    action: None,
+                },
+                MenuItem {
+                    label: "commit message".to_string(),
+                    description: String::new(),
+                    key: Some("m".to_string()),
+                    action: None,
+                },
+                MenuItem {
+                    label: "author name".to_string(),
+                    description: String::new(),
+                    key: Some("a".to_string()),
+                    action: None,
+                },
+            ],
+            selected: 0,
+            loading_index: None,
+        }
+    }
+
+    #[test]
+    fn menu_item_at_hits_first_and_second_options() {
+        let area = Rect::new(0, 0, 80, 24);
+        let popup = sample_menu();
+        // height = 3 items + 2 borders = 5; y = (24-5)/2 = 9; list starts at y+1 = 10
+        let x = (area
+            .width
+            .saturating_sub((area.width * 60 / 100).clamp(30, 60)))
+            / 2
+            + 2;
+        assert_eq!(menu_item_at(&popup, area, x, 10), Some(0));
+        assert_eq!(menu_item_at(&popup, area, x, 11), Some(1));
+        assert_eq!(menu_item_at(&popup, area, x, 12), Some(2));
+        assert_eq!(menu_item_at(&popup, area, x, 9), None); // border
+        assert_eq!(menu_item_at(&popup, area, x, 13), None); // below
+    }
+
+    #[test]
+    fn checklist_item_at_skips_search_and_separator() {
+        let area = Rect::new(0, 0, 80, 30);
+        let popup = PopupState::Checklist {
+            title: "Pick".to_string(),
+            items: vec![
+                ChecklistItem {
+                    label: "one".to_string(),
+                    checked: false,
+                    is_free_entry: false,
+                },
+                ChecklistItem {
+                    label: "two".to_string(),
+                    checked: true,
+                    is_free_entry: false,
+                },
+            ],
+            selected: 0,
+            search_textarea: crate::gui::popup::make_checklist_search_textarea(),
+            free_entry_category: None,
+            on_confirm: Box::new(|_gui, _ids| Ok(())),
+        };
+        // height = max(8, 2+6)=8; y=(30-8)/2=11; list_start=y+1+2=14
+        let x = (area
+            .width
+            .saturating_sub((area.width * 60 / 100).clamp(30, 60)))
+            / 2
+            + 2;
+        assert_eq!(checklist_item_at(&popup, area, x, 14), Some(0));
+        assert_eq!(checklist_item_at(&popup, area, x, 15), Some(1));
+        assert_eq!(checklist_item_at(&popup, area, x, 12), None); // search row
+        assert_eq!(checklist_item_at(&popup, area, x, 13), None); // separator
+    }
 }

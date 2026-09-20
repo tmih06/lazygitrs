@@ -1221,7 +1221,7 @@ fn show_author_filter_input(gui: &mut Gui) -> Result<()> {
         selected: 0,
         search_textarea: crate::gui::popup::make_checklist_search_textarea(),
         free_entry_category: Some("[author]".to_string()),
-        on_confirm: Box::new(|gui, authors| apply_author_filters(gui, authors)),
+        on_confirm: Box::new(apply_author_filters),
     };
     Ok(())
 }

@@ -90,6 +90,7 @@ pub fn render_commit_list_window(
 ///   same compact/expanded responsiveness as lazygit.
 /// - Fixed columns (hash/date/author) are padded to the visible window's max
 ///   width so rows align like lazygit's `RenderDisplayStrings`.
+#[allow(clippy::too_many_arguments)]
 fn render_commits_window(
     commits: &[Commit],
     head_hash: &str,
@@ -144,7 +145,7 @@ fn render_commits_window(
             let mut spans: Vec<Span<'static>> = Vec::new();
 
             // Hash (8, lazygit default) — color by push status.
-            let is_cherry_picked = cherry_picked.iter().any(|h| *h == commit.hash);
+            let is_cherry_picked = cherry_picked.contains(&commit.hash);
             let hash_style = if is_cherry_picked {
                 Style::default()
                     .fg(theme.accent)

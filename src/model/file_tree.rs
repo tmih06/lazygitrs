@@ -118,8 +118,7 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
         std::collections::HashMap::new();
     for (parts, file_idx) in &entries {
         let path = paths[*file_idx];
-        let mut slash_count = 0usize;
-        for (byte_idx, _) in path.match_indices('/') {
+        for (slash_count, (byte_idx, _)) in path.match_indices('/').enumerate() {
             if slash_count >= parts.len() - 1 {
                 break;
             }
@@ -127,7 +126,6 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
                 .entry(&path[..byte_idx])
                 .or_default()
                 .push(*file_idx);
-            slash_count += 1;
         }
     }
 
