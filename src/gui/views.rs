@@ -2055,6 +2055,7 @@ fn render_list_search_highlights(
         }
     }
 }
+
 fn render_list_with_range_raw(
     frame: &mut Frame,
     rect: Rect,

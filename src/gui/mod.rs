@@ -6988,13 +6988,7 @@ impl Gui {
             if let Some(btn_rect) = views::commit_ai_button_geometry(&self.popup, area) {
                 let over = rect_contains(btn_rect, mouse.column, mouse.row);
                 match mouse.kind {
-                    MouseEventKind::Moved | MouseEventKind::Drag(_) => {
-                        if self.commit_ai_button_hovered != over {
-                            self.commit_ai_button_hovered = over;
-                        }
-                    }
                     MouseEventKind::Down(MouseButton::Left) if over => {
-                        self.commit_ai_button_hovered = false;
                         let configured = !self
                             .config
                             .user_config
@@ -7019,11 +7013,7 @@ impl Gui {
                     }
                     _ => {}
                 }
-            } else if self.commit_ai_button_hovered {
-                self.commit_ai_button_hovered = false;
             }
-        } else if self.commit_ai_button_hovered {
-            self.commit_ai_button_hovered = false;
         }
 
         if matches!(self.popup, PopupState::CommitInput { .. }) {
@@ -9042,7 +9032,6 @@ impl Drop for TerminalGuard {
         let _ = terminal::disable_raw_mode();
     }
 }
-
 fn keyboard_enhancement_flags() -> crossterm::event::KeyboardEnhancementFlags {
     // Keep printable input on the terminal's normal text path. In particular,
     // REPORT_ALL_KEYS_AS_ESCAPE_CODES replaces produced text with a logical key

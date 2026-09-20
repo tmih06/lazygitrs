@@ -207,6 +207,7 @@ fn render_commits_window(
                     tag_style,
                 ));
             }
+
             // Message.
             spans.push(Span::styled(
                 commit.name.clone(),
