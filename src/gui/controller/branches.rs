@@ -8,6 +8,10 @@ use crate::gui::popup::{MenuItem, MessageKind, PopupState, make_textarea};
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    if super::commits::matches_key(key, &keybindings.commits.open_log_menu) {
+        return super::commits::show_filtering_menu(gui);
+    }
+
     // Enter: view branch commits
     if key.code == KeyCode::Enter {
         return enter_branch_commits(gui);
@@ -80,7 +84,7 @@ fn enter_branch_commits(gui: &mut Gui) -> Result<()> {
         let commits = gui.git.load_commits_for_branch(&name, 300)?;
         {
             let mut model = gui.model.lock().unwrap();
-            model.sub_commits = commits;
+            model.set_sub_commits(commits);
         }
         gui.branch_commits_name = name;
 
@@ -102,29 +106,51 @@ fn checkout_branch(gui: &mut Gui) -> Result<()> {
         }
         let name = branch.name.clone();
         drop(model);
-        show_checkout_error_or_refresh(gui, &name)?;
+        // Optimistic head flip so the UI reacts immediately.
+        {
+            let mut model = gui.model.lock().unwrap();
+            for (i, b) in model.branches.iter_mut().enumerate() {
+                b.head = i == selected;
+            }
+        }
+        start_async_checkout(gui, name);
     }
     Ok(())
 }
 
 fn checkout_previous(gui: &mut Gui) -> Result<()> {
-    show_checkout_error_or_refresh(gui, "-")?;
+    // Resolve @{-1} to an actual ref name before checking out. This is more
+    // reliable than `git checkout -`, which can fail when the previous ref is
+    // not a local branch or when the reflog entry has become invalid.
+    let name = gui
+        .git
+        .previous_branch_name()
+        .unwrap_or_else(|| "-".to_string());
+    // Optimistic: mark matching local branch as head if we can resolve it.
+    if name != "-" {
+        let mut model = gui.model.lock().unwrap();
+        for b in model.branches.iter_mut() {
+            b.head = b.name == name;
+        }
+    }
+    start_async_checkout(gui, name);
     Ok(())
 }
 
 fn checkout_picker(gui: &mut Gui) -> Result<()> {
-    use crate::gui::popup::{ListPickerCore, ListPickerItem, make_help_search_textarea};
+    use crate::gui::popup::{ListPickerCore, ListPickerItem, make_command_palette_search_textarea};
 
     let model = gui.model.lock().unwrap();
     let mut items = Vec::new();
 
     if let Some(prev) = gui.git.previous_branch_name() {
         items.push(ListPickerItem {
-            value: "-".to_string(),
-            // Label includes both "previous branch" and "prev branch" so that
-            // typing either phrase (or "-") jumps to this entry.
-            label: format!("Go to previous branch — {}", prev),
+            value: prev.clone(),
+            // "[-]" prefix lets typing "-" jump here; label also contains
+            // "previous branch" and "prev branch" for those search phrases.
+            label: format!("[-] Go to previous branch (prev branch) — {}", prev),
             category: "Quick Actions".to_string(),
+            description: None,
         });
     }
 
@@ -136,6 +162,7 @@ fn checkout_picker(gui: &mut Gui) -> Result<()> {
             value: branch.name.clone(),
             label: branch.name.clone(),
             category: "Branches".to_string(),
+            description: None,
         });
     }
 
@@ -146,6 +173,7 @@ fn checkout_picker(gui: &mut Gui) -> Result<()> {
                 value: full_name.clone(),
                 label: full_name,
                 category: "Remote Branches".to_string(),
+                description: None,
             });
         }
     }
@@ -155,6 +183,7 @@ fn checkout_picker(gui: &mut Gui) -> Result<()> {
             value: tag.name.clone(),
             label: tag.name.clone(),
             category: "Tags".to_string(),
+            description: None,
         });
     }
 
@@ -163,6 +192,7 @@ fn checkout_picker(gui: &mut Gui) -> Result<()> {
             value: commit.hash.clone(),
             label: format!("{} {}", commit.short_hash(), commit.name),
             category: "Commits".to_string(),
+            description: None,
         });
     }
 
@@ -173,28 +203,64 @@ fn checkout_picker(gui: &mut Gui) -> Result<()> {
         core: ListPickerCore {
             items,
             selected: 0,
-            search_textarea: make_help_search_textarea(),
+            search_textarea: make_command_palette_search_textarea(),
             scroll_offset: 0,
         },
         on_confirm: Box::new(|gui, ref_name| {
-            show_checkout_error_or_refresh(gui, ref_name)?;
+            // Optimistic head flip for local branches.
+            {
+                let mut model = gui.model.lock().unwrap();
+                for b in model.branches.iter_mut() {
+                    b.head = b.name == ref_name;
+                }
+            }
+            start_async_checkout(gui, ref_name.to_string());
             Ok(())
         }),
     };
     Ok(())
 }
 
+fn start_async_checkout(gui: &mut Gui, name: String) {
+    gui.pending_checkout_by_name = Some(name.clone());
+    gui.start_remote_op(
+        "Checking out",
+        &format!("Checking out {}", name),
+        move |git| {
+            git.checkout_branch(&name)?;
+            Ok(())
+        },
+    );
+}
+
 fn show_checkout_error_or_refresh(gui: &mut Gui, name: &str) -> Result<()> {
+    // Kept for call sites that still need a synchronous checkout (e.g. picker
+    // confirmations that want an immediate error). Prefer start_async_checkout
+    // on interactive hot paths.
     match gui.git.checkout_branch(name) {
         Ok(()) => {
             gui.needs_refresh = true;
         }
         Err(e) => {
-            gui.popup = PopupState::Message {
-                title: "Checkout error".to_string(),
-                message: format!("{}", e),
-                kind: MessageKind::Error,
-            };
+            let err = format!("{}", e);
+            if crate::gui::is_checkout_ref_not_found(&err) {
+                let name = name.to_string();
+                gui.popup = PopupState::Confirm {
+                    title: "Branch not found".to_string(),
+                    message: format!("Branch not found. Create a new branch named {}?", name),
+                    on_confirm: Box::new(move |gui| {
+                        gui.git.create_branch(&name)?;
+                        gui.needs_refresh = true;
+                        Ok(())
+                    }),
+                };
+            } else {
+                gui.popup = PopupState::Message {
+                    title: "Checkout error".to_string(),
+                    message: err,
+                    kind: MessageKind::Error,
+                };
+            }
         }
     }
     Ok(())

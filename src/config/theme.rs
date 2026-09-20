@@ -31,6 +31,7 @@ pub struct Theme {
 
     // ── Commits ──────────────────────────────────────────────────────
     pub commit_hash: Style,
+    pub commit_hash_unpushed: Style,
     pub commit_author: Style,
     pub commit_date: Style,
     pub commit_hash_pushed: Color,
@@ -205,6 +206,7 @@ impl Theme {
             diff_add_word: Color::Rgb(0, 120, 0),
             diff_remove_word: Color::Rgb(120, 0, 0),
             commit_hash: Style::default().fg(Color::Yellow),
+            commit_hash_unpushed: Style::default().fg(Color::Red),
             commit_author: Style::default().fg(Color::Green),
             commit_date: Style::default().fg(Color::Blue),
             commit_hash_pushed: Color::Rgb(102, 102, 102),
@@ -334,6 +336,8 @@ impl Theme {
 pub struct ThemeJson {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub appearance: Option<String>,
 
     // Semantic base colors
     pub primary: Option<String>,
@@ -387,6 +391,18 @@ pub struct ThemeJson {
 }
 
 impl ThemeJson {
+    pub fn resolved_appearance(&self) -> ThemeAppearance {
+        if let Some(raw) = self.appearance.as_deref() {
+            if let Some(parsed) = ThemeAppearance::parse(raw) {
+                return parsed;
+            }
+        }
+        self.background
+            .as_deref()
+            .map(appearance_from_hex)
+            .unwrap_or(ThemeAppearance::Dark)
+    }
+
     /// Convert this JSON theme into a full `Theme`, deriving any missing
     /// values from semantic base colors and the default dark theme.
     pub fn to_theme(&self) -> Theme {
@@ -624,6 +640,7 @@ impl ThemeJson {
             diff_remove_word,
 
             commit_hash: Style::default().fg(warning),
+            commit_hash_unpushed: Style::default().fg(error),
             commit_author: Style::default().fg(primary),
             commit_date: Style::default().fg(info),
             commit_hash_pushed: text_dimmed,
@@ -727,11 +744,36 @@ impl ThemeJson {
 
 // ── Built-in color themes ─────────────────────────────────────────────────
 
+/// Whether a theme is designed for light or dark terminals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeAppearance {
+    Dark,
+    Light,
+}
+
+impl ThemeAppearance {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemeAppearance::Dark => "dark",
+            ThemeAppearance::Light => "light",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "dark" => Some(ThemeAppearance::Dark),
+            "light" => Some(ThemeAppearance::Light),
+            _ => None,
+        }
+    }
+}
+
 /// A named color theme preset.
 #[derive(Debug, Clone)]
 pub struct ColorTheme {
     pub name: String,
     pub id: String,
+    pub appearance: ThemeAppearance,
 }
 
 impl ColorTheme {
@@ -778,6 +820,7 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
     themes.push(ColorTheme {
         name: "Default (Dark)".to_string(),
         id: "default".to_string(),
+        appearance: ThemeAppearance::Dark,
     });
     seen_ids.insert("default".to_string());
 
@@ -794,6 +837,7 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
                 themes.push(ColorTheme {
                     name: theme_json.name.clone(),
                     id: theme_json.id.clone(),
+                    appearance: theme_json.resolved_appearance(),
                 });
             }
         }
@@ -801,16 +845,27 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
 
     // 3. User themes from ~/.config/lazygit/themes/
     if let Some(user_themes) = discover_user_themes() {
-        for (id, name) in user_themes {
+        for (id, name, appearance) in user_themes {
             if seen_ids.insert(id.clone()) {
-                themes.push(ColorTheme { name, id });
+                themes.push(ColorTheme {
+                    name,
+                    id,
+                    appearance,
+                });
             }
         }
     }
 
-    // Sort non-default themes alphabetically by name
+    // Dark themes first, then light — alphabetical within each group.
+    // Default stays at index 0.
     if themes.len() > 1 {
-        themes[1..].sort_by_key(|a| a.name.to_lowercase());
+        themes[1..].sort_by(|a, b| {
+            let a_light = matches!(a.appearance, ThemeAppearance::Light);
+            let b_light = matches!(b.appearance, ThemeAppearance::Light);
+            a_light
+                .cmp(&b_light)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
     }
 
     themes
@@ -834,7 +889,7 @@ fn user_themes_dirs() -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-fn discover_user_themes() -> Option<Vec<(String, String)>> {
+fn discover_user_themes() -> Option<Vec<(String, String, ThemeAppearance)>> {
     let mut result = Vec::new();
     for dir in user_themes_dirs() {
         if !dir.is_dir() {
@@ -847,7 +902,11 @@ fn discover_user_themes() -> Option<Vec<(String, String)>> {
                     && let Ok(contents) = std::fs::read_to_string(&path)
                     && let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents)
                 {
-                    result.push((theme_json.id.clone(), theme_json.name.clone()));
+                    result.push((
+                        theme_json.id.clone(),
+                        theme_json.name.clone(),
+                        theme_json.resolved_appearance(),
+                    ));
                 }
             }
         }
@@ -885,7 +944,7 @@ fn load_user_theme(id: &str) -> Option<Theme> {
 // ── Color helpers ────────────────────────────────────────────────────────
 
 /// Mix two RGB colors. `amount` is 0..255 where 0 = all `a`, 255 = all `b`.
-fn mix_colors(a: Color, b: Color, amount: u8) -> Color {
+pub(crate) fn mix_colors(a: Color, b: Color, amount: u8) -> Color {
     let (ar, ag, ab) = color_to_rgb(a);
     let (br, bg, bb) = color_to_rgb(b);
     let t = amount as f32 / 255.0;
@@ -916,6 +975,19 @@ fn color_to_rgb(c: Color) -> (u8, u8, u8) {
         Color::LightCyan => (100, 255, 255),
         Color::White => (255, 255, 255),
         _ => (128, 128, 128),
+    }
+}
+
+fn appearance_from_hex(s: &str) -> ThemeAppearance {
+    let Some(Color::Rgb(r, g, b)) = parse_hex(s) else {
+        return ThemeAppearance::Dark;
+    };
+    // Relative luminance (sRGB approximation)
+    let lum = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0;
+    if lum >= 0.45 {
+        ThemeAppearance::Light
+    } else {
+        ThemeAppearance::Dark
     }
 }
 

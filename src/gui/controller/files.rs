@@ -5,7 +5,7 @@ use crate::config::KeybindingConfig;
 use crate::config::keybindings::Key;
 use crate::gui::Gui;
 use crate::gui::popup::{
-    CommitInputFocus, MenuItem, PopupState, make_commit_body_textarea,
+    CommitInputFocus, CommitInputKind, MenuItem, PopupState, make_commit_body_textarea,
     make_commit_summary_textarea, make_textarea,
 };
 use crate::os::platform::Platform;
@@ -22,6 +22,13 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
     // actions with a simple file-browser interaction model.
     if gui.file_explorer.active {
         return handle_explorer_key(gui, key, keybindings);
+    }
+
+    if super::diff_grep::is_diff_grep_key(key) {
+        return super::diff_grep::open_diff_grep_picker(gui);
+    }
+    if super::commits::matches_key(key, &keybindings.commits.open_log_menu) {
+        return super::commits::show_files_filtering_menu(gui);
     }
 
     // Enter: toggle directory collapse in tree view, or focus diff for files
@@ -129,49 +136,62 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
 }
 
 fn toggle_stage(gui: &mut Gui) -> Result<()> {
-    // If in tree view and a directory is selected, stage/unstage all child files
+    // If in tree view and a directory is selected, stage/unstage all child files.
+    // Optimistic UI + background git so rapid Space presses stay snappy.
     if gui.show_file_tree {
         let selected = gui.context_mgr.selected_active();
-        if let Some(node) = gui.file_tree_nodes.get(selected)
-            && node.is_dir
-        {
-            let child_indices = node.child_file_indices.clone();
-            let model = gui.model.lock().unwrap();
-            // Check if any child has unstaged changes
-            let any_unstaged = child_indices.iter().any(|&i| {
-                model
-                    .files
-                    .get(i)
-                    .is_some_and(|f| f.has_unstaged_changes || !f.tracked)
-            });
-            let paths: Vec<String> = child_indices
-                .iter()
-                .filter_map(|&i| model.files.get(i))
-                .flat_map(|f| {
-                    if any_unstaged {
-                        vec![f.git_add_path().to_string()]
-                    } else {
-                        f.git_reset_paths().into_iter().map(String::from).collect()
+        if let Some(node) = gui.file_tree_nodes.get(selected) {
+            if node.is_dir {
+                let child_indices = node.child_file_indices.clone();
+                let mut model = gui.model.lock().unwrap();
+                // Only stage children that still need staging. Re-adding already
+                // fully staged paths fails when the path is gone from disk
+                // (e.g. staged deletions). Matches lazygit:
+                // filterNodesHaveUnstagedChanges + StageFiles.
+                let mut staging = false;
+                for &i in &child_indices {
+                    if let Some(f) = model.files.get(i) {
+                        if f.has_unstaged_changes || !f.tracked {
+                            staging = true;
+                            break;
+                        }
                     }
-                })
-                .collect();
-            drop(model);
+                }
+                let mut to_stage = Vec::new();
+                let mut to_unstage = Vec::new();
+                for &i in &child_indices {
+                    let Some(f) = model.files.get_mut(i) else {
+                        continue;
+                    };
+                    if staging {
+                        if f.has_unstaged_changes || !f.tracked {
+                            to_stage.push(f.git_add_path().to_string());
+                            let _ = f.optimistic_stage();
+                        }
+                    } else {
+                        to_unstage.extend(f.git_reset_paths().into_iter().map(String::from));
+                        let _ = f.optimistic_unstage();
+                    }
+                }
+                drop(model);
+                gui.rebuild_file_tree_from_model();
+                gui.needs_diff_refresh = true;
 
-            if any_unstaged {
-                gui.git.stage_files(&paths)?;
-            } else {
-                gui.git.unstage_files(&paths)?;
+                if !to_stage.is_empty() {
+                    gui.enqueue_stage_then_refresh(to_stage, true);
+                } else if !to_unstage.is_empty() {
+                    gui.enqueue_stage_then_refresh(to_unstage, false);
+                }
+                return Ok(());
             }
-            gui.needs_files_refresh = true;
-            return Ok(());
         }
     }
 
     let Some(file_idx) = gui.selected_file_index() else {
         return Ok(());
     };
-    let model = gui.model.lock().unwrap();
-    if let Some(file) = model.files.get(file_idx) {
+    let mut model = gui.model.lock().unwrap();
+    if let Some(file) = model.files.get_mut(file_idx) {
         let add_path = file.git_add_path().to_string();
         let reset_paths: Vec<String> = file
             .git_reset_paths()
@@ -180,32 +200,48 @@ fn toggle_stage(gui: &mut Gui) -> Result<()> {
             .collect();
         let has_staged = file.has_staged_changes;
         let has_unstaged = file.has_unstaged_changes;
-        drop(model);
-
-        if has_unstaged || !has_staged {
-            gui.git.stage_file(&add_path)?;
+        let should_stage = has_unstaged || !has_staged;
+        if should_stage {
+            let _ = file.optimistic_stage();
         } else {
-            gui.git.unstage_files(&reset_paths)?;
+            let _ = file.optimistic_unstage();
         }
-        gui.needs_files_refresh = true;
+        drop(model);
+        gui.rebuild_file_tree_from_model();
+        gui.needs_diff_refresh = true;
+
+        if should_stage {
+            gui.enqueue_stage_then_refresh(vec![add_path], true);
+        } else {
+            gui.enqueue_stage_then_refresh(reset_paths, false);
+        }
+    } else {
+        drop(model);
     }
     Ok(())
 }
 
 fn toggle_stage_all(gui: &mut Gui) -> Result<()> {
-    let model = gui.model.lock().unwrap();
+    // Optimistic UI + background git (same pattern as Space / dir toggle).
+    let mut model = gui.model.lock().unwrap();
     let any_unstaged = model
         .files
         .iter()
         .any(|f| f.has_unstaged_changes || !f.tracked);
-    drop(model);
-
-    if any_unstaged {
-        gui.git.stage_all()?;
-    } else {
-        gui.git.unstage_all()?;
+    let stage = any_unstaged;
+    for f in model.files.iter_mut() {
+        if stage {
+            if f.has_unstaged_changes || !f.tracked {
+                let _ = f.optimistic_stage();
+            }
+        } else if f.has_staged_changes {
+            let _ = f.optimistic_unstage();
+        }
     }
-    gui.needs_files_refresh = true;
+    drop(model);
+    gui.rebuild_file_tree_from_model();
+    gui.needs_diff_refresh = true;
+    gui.enqueue_stage_all_then_refresh(stage);
     Ok(())
 }
 
@@ -214,6 +250,21 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
         return Ok(());
     }
 
+    let head_is_detached = gui.model.lock().unwrap().head_branch_name.is_empty();
+    if head_is_detached {
+        gui.popup = PopupState::Confirm {
+            title: "Detached HEAD".to_string(),
+            message: "You are in a detached HEAD, not a branch. Are you sure you want to commit?"
+                .to_string(),
+            on_confirm: Box::new(open_commit_prompt_after_detached_head_warning),
+        };
+        return Ok(());
+    }
+
+    open_commit_prompt_after_detached_head_warning(gui)
+}
+
+fn open_commit_prompt_after_detached_head_warning(gui: &mut Gui) -> Result<()> {
     let model = gui.model.lock().unwrap();
     let any_staged = model.files.iter().any(|f| f.has_staged_changes);
     let no_files = model.files.is_empty();
@@ -228,14 +279,22 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
                     gui.popup = saved;
                 } else {
                     gui.popup = PopupState::CommitInput {
+                        kind: CommitInputKind::Commit,
                         summary_textarea: make_commit_summary_textarea(),
                         body_textarea: make_commit_body_textarea(),
                         body_state: crate::gui::popup::BodySoftWrap::new(),
                         focus: CommitInputFocus::Summary,
                         on_confirm: Box::new(|gui, message| {
                             if !message.is_empty() {
-                                gui.git.create_empty_commit(message)?;
-                                gui.needs_refresh = true;
+                                let message = message.to_string();
+                                gui.start_remote_op(
+                                    "Empty commit",
+                                    "Creating empty commit...",
+                                    move |git| {
+                                        git.create_empty_commit(&message)?;
+                                        Ok(())
+                                    },
+                                );
                             }
                             Ok(())
                         }),
@@ -258,14 +317,18 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
                     gui.popup = saved;
                 } else {
                     gui.popup = PopupState::CommitInput {
+                        kind: CommitInputKind::Commit,
                         summary_textarea: make_commit_summary_textarea(),
                         body_textarea: make_commit_body_textarea(),
                         body_state: crate::gui::popup::BodySoftWrap::new(),
                         focus: CommitInputFocus::Summary,
                         on_confirm: Box::new(|gui, message| {
                             if !message.is_empty() {
-                                gui.git.create_commit(message, false)?;
-                                gui.needs_refresh = true;
+                                let message = message.to_string();
+                                gui.start_remote_op("Commit", "Creating commit...", move |git| {
+                                    git.create_commit(&message, false)?;
+                                    Ok(())
+                                });
                             }
                             Ok(())
                         }),
@@ -283,14 +346,18 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
     }
 
     gui.popup = PopupState::CommitInput {
+        kind: CommitInputKind::Commit,
         summary_textarea: make_commit_summary_textarea(),
         body_textarea: make_commit_body_textarea(),
         body_state: crate::gui::popup::BodySoftWrap::new(),
         focus: CommitInputFocus::Summary,
         on_confirm: Box::new(|gui, message| {
             if !message.is_empty() {
-                gui.git.create_commit(message, false)?;
-                gui.needs_refresh = true;
+                let message = message.to_string();
+                gui.start_remote_op("Commit", "Creating commit...", move |git| {
+                    git.create_commit(&message, false)?;
+                    Ok(())
+                });
             }
             Ok(())
         }),
@@ -325,14 +392,18 @@ fn open_ai_commit_prompt(gui: &mut Gui) -> Result<()> {
             on_confirm: Box::new(|gui| {
                 gui.git.stage_all()?;
                 gui.popup = PopupState::CommitInput {
+                    kind: CommitInputKind::Commit,
                     summary_textarea: make_commit_summary_textarea(),
                     body_textarea: make_commit_body_textarea(),
                     body_state: crate::gui::popup::BodySoftWrap::new(),
                     focus: CommitInputFocus::Summary,
                     on_confirm: Box::new(|gui, message| {
                         if !message.is_empty() {
-                            gui.git.create_commit(message, false)?;
-                            gui.needs_refresh = true;
+                            let message = message.to_string();
+                            gui.start_remote_op("Commit", "Creating commit...", move |git| {
+                                git.create_commit(&message, false)?;
+                                Ok(())
+                            });
                         }
                         Ok(())
                     }),
@@ -345,14 +416,18 @@ fn open_ai_commit_prompt(gui: &mut Gui) -> Result<()> {
     }
 
     gui.popup = PopupState::CommitInput {
+        kind: CommitInputKind::Commit,
         summary_textarea: make_commit_summary_textarea(),
         body_textarea: make_commit_body_textarea(),
         body_state: crate::gui::popup::BodySoftWrap::new(),
         focus: CommitInputFocus::Summary,
         on_confirm: Box::new(|gui, message| {
             if !message.is_empty() {
-                gui.git.create_commit(message, false)?;
-                gui.needs_refresh = true;
+                let message = message.to_string();
+                gui.start_remote_op("Commit", "Creating commit...", move |git| {
+                    git.create_commit(&message, false)?;
+                    Ok(())
+                });
             }
             Ok(())
         }),
@@ -371,6 +446,11 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     };
     let file_name = file.display_name.clone();
     let rel_path = file.name.clone();
+    let current_path = file.current_path().to_string();
+    let diff_paths: Vec<String> = file.diff_paths().into_iter().map(str::to_string).collect();
+    let old_path = file
+        .rename_paths()
+        .map_or_else(|| file.name.clone(), |(old, _)| old.to_string());
     let is_added = file.added;
     let is_deleted = file.deleted;
     drop(model);
@@ -378,14 +458,13 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     let abs_path = gui
         .git
         .repo_path()
-        .join(&rel_path)
+        .join(&current_path)
         .to_string_lossy()
         .to_string();
-    let rel_for_diff = rel_path.clone();
     let file_name_copy = file_name.clone();
     let rel_path_copy = rel_path.clone();
-    let path_for_old = rel_path.clone();
-    let path_for_new = rel_path.clone();
+    let path_for_old = old_path.clone();
+    let path_for_new = current_path.clone();
 
     gui.popup = PopupState::Menu {
         title: "Copy to clipboard".to_string(),
@@ -458,8 +537,12 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
                 description: String::new(),
                 key: Some("s".to_string()),
                 action: Some(Box::new(move |gui| {
-                    let mut diff = gui.git.diff_file(&rel_for_diff).unwrap_or_default();
-                    let staged = gui.git.diff_file_staged(&rel_for_diff).unwrap_or_default();
+                    let path_refs: Vec<&str> = diff_paths.iter().map(String::as_str).collect();
+                    let mut diff = gui.git.diff_file_paths(&path_refs).unwrap_or_default();
+                    let staged = gui
+                        .git
+                        .diff_file_staged_paths(&path_refs)
+                        .unwrap_or_default();
                     if !staged.is_empty() {
                         if !diff.is_empty() {
                             diff.push('\n');
@@ -493,13 +576,44 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     Ok(())
 }
 
+/// Absolute path of the selected directory node in tree view, if any.
+/// Returns None for file nodes or when the tree view is off.
+fn selected_dir_abs_path(gui: &Gui) -> Option<String> {
+    if !gui.show_file_tree {
+        return None;
+    }
+    let selected = gui.context_mgr.selected_active();
+    let node = gui.file_tree_nodes.get(selected)?;
+    if !node.is_dir {
+        return None;
+    }
+    if node.path == "." || node.path.is_empty() {
+        return Some(gui.git.repo_path().to_string_lossy().to_string());
+    }
+    Some(
+        gui.git
+            .repo_path()
+            .join(&node.path)
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
 fn open_in_editor(gui: &mut Gui) -> Result<()> {
+    // Directories: open the folder in the editor (e.g. `code <dir>`).
+    if let Some(dir_abs) = selected_dir_abs_path(gui) {
+        match gui.config.user_config.os.plan_open_dir(&dir_abs) {
+            Ok(launch) => gui.launch_editor(launch)?,
+            Err(_) => Platform::open_file(&dir_abs)?,
+        }
+        return Ok(());
+    }
     let Some(file_idx) = gui.selected_file_index() else {
         return Ok(());
     };
     let model = gui.model.lock().unwrap();
     if let Some(file) = model.files.get(file_idx) {
-        let rel_path = file.name.clone();
+        let rel_path = file.current_path().to_string();
         drop(model);
 
         let abs_path = gui
@@ -508,8 +622,6 @@ fn open_in_editor(gui: &mut Gui) -> Result<()> {
             .join(&rel_path)
             .to_string_lossy()
             .to_string();
-        let os = &gui.config.user_config.os;
-
         // Jump to first changed hunk if the diff for this file is loaded.
         let first_hunk_line = if gui.diff_view.filename == rel_path {
             gui.diff_view.hunk_starts.first().and_then(|&idx| {
@@ -521,37 +633,35 @@ fn open_in_editor(gui: &mut Gui) -> Result<()> {
             None
         };
 
-        if let Some(line) = first_hunk_line {
-            let tpl = if !os.edit_at_line.is_empty() {
-                &os.edit_at_line
-            } else {
-                &os.edit
-            };
-            if !tpl.is_empty() {
-                crate::config::user_config::OsConfig::run_template_at_line(
-                    tpl, &abs_path, line, 1,
-                )?;
-                return Ok(());
-            }
-        }
-
-        if !os.edit.is_empty() {
-            crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path)?;
-        } else {
-            // Fallback: use $EDITOR or platform open
-            Platform::open_file(&abs_path)?;
+        match gui
+            .config
+            .user_config
+            .os
+            .plan_edit(&abs_path, first_hunk_line, Some(1))
+        {
+            Ok(launch) => gui.launch_editor(launch)?,
+            Err(_) => Platform::open_file(&abs_path)?,
         }
     }
     Ok(())
 }
 
 fn open_in_default_program(gui: &mut Gui) -> Result<()> {
+    // Directories: open the folder with `os.open` (native file viewer by
+    // default), falling back to the platform opener.
+    if let Some(dir_abs) = selected_dir_abs_path(gui) {
+        match gui.config.user_config.os.plan_open(&dir_abs) {
+            Ok(launch) => gui.launch_editor(launch)?,
+            Err(_) => Platform::open_file(&dir_abs)?,
+        }
+        return Ok(());
+    }
     let Some(file_idx) = gui.selected_file_index() else {
         return Ok(());
     };
     let model = gui.model.lock().unwrap();
     if let Some(file) = model.files.get(file_idx) {
-        let rel_path = file.name.clone();
+        let rel_path = file.current_path().to_string();
         drop(model);
 
         let abs_path = gui
@@ -560,8 +670,8 @@ fn open_in_default_program(gui: &mut Gui) -> Result<()> {
             .join(&rel_path)
             .to_string_lossy()
             .to_string();
-        let open_template = &gui.config.user_config.os.open;
-        crate::config::user_config::OsConfig::run_template(open_template, &abs_path)?;
+        let launch = gui.config.user_config.os.plan_open(&abs_path)?;
+        gui.launch_editor(launch)?;
     }
     Ok(())
 }
@@ -675,56 +785,52 @@ fn discard_file(gui: &mut Gui) -> Result<()> {
     // If in tree view and a directory is selected, discard all child files
     if gui.show_file_tree {
         let selected = gui.context_mgr.selected_active();
-        if let Some(node) = gui.file_tree_nodes.get(selected)
-            && node.is_dir
-        {
-            let child_indices = node.child_file_indices.clone();
-            let model = gui.model.lock().unwrap();
-            let files_info: Vec<(String, bool)> = child_indices
-                .iter()
-                .filter_map(|&i| model.files.get(i).map(|f| (f.name.clone(), f.added)))
-                .collect();
-            let dir_name = node.name.clone();
-            drop(model);
+        if let Some(node) = gui.file_tree_nodes.get(selected) {
+            if node.is_dir {
+                let child_indices = node.child_file_indices.clone();
+                let model = gui.model.lock().unwrap();
+                let files: Vec<_> = child_indices
+                    .iter()
+                    .filter_map(|&i| model.files.get(i).cloned())
+                    .collect();
+                let dir_name = node.name.clone();
+                drop(model);
 
-            if files_info.is_empty() {
+                if files.is_empty() {
+                    return Ok(());
+                }
+
+                if !gui.config.user_config.gui.skip_discard_change_warning {
+                    let files_clone = files.clone();
+                    gui.popup = PopupState::Menu {
+                        title: format!("Discard all changes in '{}'?", dir_name),
+                        items: vec![
+                            MenuItem {
+                                label: "Discard".to_string(),
+                                description: "discard all changes".to_string(),
+                                key: Some("d".to_string()),
+                                action: Some(Box::new(move |gui| {
+                                    gui.git.discard_files(&files_clone)?;
+                                    gui.needs_refresh = true;
+                                    Ok(())
+                                })),
+                            },
+                            MenuItem {
+                                label: "Cancel".to_string(),
+                                description: String::new(),
+                                key: Some("c".to_string()),
+                                action: Some(Box::new(|_| Ok(()))),
+                            },
+                        ],
+                        selected: 0,
+                        loading_index: None,
+                    };
+                } else {
+                    gui.git.discard_files(&files)?;
+                    gui.needs_refresh = true;
+                }
                 return Ok(());
             }
-
-            if !gui.config.user_config.gui.skip_discard_change_warning {
-                let files_info_clone = files_info.clone();
-                gui.popup = PopupState::Menu {
-                    title: format!("Discard all changes in '{}'?", dir_name),
-                    items: vec![
-                        MenuItem {
-                            label: "Discard".to_string(),
-                            description: "discard all changes".to_string(),
-                            key: Some("d".to_string()),
-                            action: Some(Box::new(move |gui| {
-                                for (name, added) in &files_info_clone {
-                                    gui.git.discard_file(name, *added)?;
-                                }
-                                gui.needs_refresh = true;
-                                Ok(())
-                            })),
-                        },
-                        MenuItem {
-                            label: "Cancel".to_string(),
-                            description: String::new(),
-                            key: Some("c".to_string()),
-                            action: Some(Box::new(|_| Ok(()))),
-                        },
-                    ],
-                    selected: 0,
-                    loading_index: None,
-                };
-            } else {
-                for (name, added) in &files_info {
-                    gui.git.discard_file(name, *added)?;
-                }
-                gui.needs_refresh = true;
-            }
-            return Ok(());
         }
     }
 
@@ -733,14 +839,15 @@ fn discard_file(gui: &mut Gui) -> Result<()> {
     };
     let model = gui.model.lock().unwrap();
     if let Some(file) = model.files.get(file_idx) {
-        let name = file.name.clone();
+        let name = file.current_path().to_string();
+        let display = file.display_name.clone();
         let added = file.added;
         drop(model);
 
         if !gui.config.user_config.gui.skip_discard_change_warning {
             let name_clone = name.clone();
             gui.popup = PopupState::Menu {
-                title: format!("Discard changes to '{}'?", name),
+                title: format!("Discard changes to '{}'?", display),
                 items: vec![
                     MenuItem {
                         label: "Discard".to_string(),
@@ -776,7 +883,7 @@ fn ignore_file(gui: &mut Gui) -> Result<()> {
     };
     let model = gui.model.lock().unwrap();
     if let Some(file) = model.files.get(file_idx) {
-        let name = file.name.clone();
+        let name = file.current_path().to_string();
         let display = file.display_name.clone();
         drop(model);
 
@@ -823,8 +930,10 @@ fn amend_commit(gui: &mut Gui) -> Result<()> {
         title: "Amend".to_string(),
         message: "Amend last commit with staged changes?".to_string(),
         on_confirm: Box::new(|gui| {
-            gui.git.amend_commit()?;
-            gui.needs_refresh = true;
+            gui.start_remote_op("Amend", "Amending commit...", |git| {
+                git.amend_commit()?;
+                Ok(())
+            });
             Ok(())
         }),
     };
@@ -838,13 +947,13 @@ fn commit_with_editor(gui: &mut Gui) -> Result<()> {
         title: "Commit message (or leave empty to open editor)".to_string(),
         textarea: make_textarea("Enter commit message..."),
         on_confirm: Box::new(|gui, message| {
-            if message.is_empty() {
-                // For now, just create an empty commit message prompt
-                // Full editor integration requires Phase 4 (subprocess management)
-            } else {
-                gui.git.create_commit(message, false)?;
+            if !message.is_empty() {
+                let message = message.to_string();
+                gui.start_remote_op("Commit", "Creating commit...", move |git| {
+                    git.create_commit(&message, false)?;
+                    Ok(())
+                });
             }
-            gui.needs_refresh = true;
             Ok(())
         }),
         is_commit: false,

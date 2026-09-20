@@ -774,13 +774,14 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lazygitrs"
-version = "0.0.22"
+version = "0.0.38"
 dependencies = [
  "anyhow",
  "clap",
  "crossterm",
  "dirs",
  "include_dir",
+ "libc",
  "once_cell",
  "ratatui",
  "serde",
