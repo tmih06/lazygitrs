@@ -185,6 +185,28 @@ Summary
 
 <!-- GEN_BENCHMARKS_END -->
 
+### Runtime benchmarks
+
+The `--version` benchmark above only measures startup. What actually matters is
+CPU and memory while the TUI runs — measured with hyperfine driving both apps
+inside a real PTY (`script(1)`, 220×50) on `microsoft/vscode` (~165k commits,
+19k files), 30s sessions ×5, `autoFetch` off for both:
+
+![lazygitrs vs lazygit benchmark](_docs/benchmark.png)
+
+| scenario | lazygit (Go) | lazygitrs | vs lazygit |
+|---|---|---|---|
+| idle 30s CPU | 2.08s | **2.05s** | faster |
+| navigation 30s CPU | 2.23s | **2.21s** | faster |
+| dirty tree (200 files) 30s CPU | 2.41s | **2.76s** | 1.14× |
+| peak RSS | 312MB | **295MB** | −5% |
+| steady-state RSS | 22.6MB | **12.4MB** | −45% |
+| binary size | 18.5MB | **12.5MB** | −33% |
+
+The dirty-tree residual is the per-file diff-stats feature (per-file +/− counts
+and hunk numbers in the Files panel) that lazygit doesn't compute.
+
+
 MIT
 
 Feel free to fork and give it your own spin.
