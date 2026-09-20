@@ -91,6 +91,7 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Stage artifact
         shell: bash
+        run: |
           set -euo pipefail
           bin="target/${{ matrix.target }}/release/lazygitrs"
           [ -f "$bin.exe" ] && bin="$bin.exe"
