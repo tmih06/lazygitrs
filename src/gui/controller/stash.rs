@@ -43,8 +43,9 @@ fn enter_stash_files(gui: &mut Gui) -> Result<()> {
         let message = entry.name.clone();
         drop(model);
 
-        // Load stash files (stashes are merge commits internally)
-        let commit_files = gui.git.commit_files(&hash)?;
+        // Keep entering large stashes responsive. The selected file's diff is
+        // loaded separately, so whole-stash line and hunk counts are unnecessary.
+        let commit_files = gui.git.commit_files_without_stats(&hash)?;
         {
             let mut model = gui.model.lock().unwrap();
             model.commit_files = commit_files;
@@ -90,8 +91,12 @@ fn pop_stash(gui: &mut Gui) -> Result<()> {
                     description: "apply and drop this stash".to_string(),
                     key: Some("g".to_string()),
                     action: Some(Box::new(move |gui| {
-                        gui.git.stash_pop(index)?;
+                        let result = gui.git.stash_pop(index);
+                        // A conflicting pop still touches the worktree (conflict
+                        // markers / unmerged paths), so refresh even on failure.
                         gui.needs_refresh = true;
+                        gui.needs_diff_refresh = true;
+                        result?;
                         Ok(())
                     })),
                 },
@@ -125,8 +130,12 @@ fn apply_stash(gui: &mut Gui) -> Result<()> {
                     description: "apply stash (keep in stash list)".to_string(),
                     key: Some("a".to_string()),
                     action: Some(Box::new(move |gui| {
-                        gui.git.stash_apply(index)?;
+                        let result = gui.git.stash_apply(index);
+                        // A conflicting apply still touches the worktree, so
+                        // refresh even on failure.
                         gui.needs_refresh = true;
+                        gui.needs_diff_refresh = true;
+                        result?;
                         Ok(())
                     })),
                 },

@@ -10,6 +10,25 @@ use crate::model::FileChangeStatus;
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    if super::diff_grep::is_diff_grep_key(key) {
+        return super::diff_grep::open_diff_grep_picker(gui);
+    }
+    if super::commits::matches_key(key, &keybindings.commits.open_log_menu) {
+        let selected = gui.context_mgr.selected_active();
+        let selected_path = if gui.show_commit_file_tree {
+            gui.commit_file_tree_nodes
+                .get(selected)
+                .map(|node| node.path.clone())
+        } else {
+            let model = gui.model.lock().unwrap();
+            model
+                .commit_files
+                .get(selected)
+                .map(|file| file.current_path().to_string())
+        };
+        return super::commits::show_file_path_filtering_menu(gui, selected_path);
+    }
+
     // Escape: go back to parent list (Commits, Stash, BranchCommits, or Reflog)
     if key.code == KeyCode::Esc {
         let parent = if let Some(override_parent) = gui.commit_files_parent_context.take() {
@@ -62,11 +81,106 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return Ok(());
     }
 
+    // e / o — same as Files tab (works while sidebar is focused; no Enter needed)
+    if matches_key(key, &keybindings.universal.edit) {
+        return open_selected_in_editor(gui);
+    }
+    if matches_key(key, &keybindings.universal.open_file) {
+        return open_selected_in_default_program(gui);
+    }
+
     // Copy to clipboard
     if key.code == KeyCode::Char('y') {
         return copy_to_clipboard_menu(gui);
     }
 
+    Ok(())
+}
+
+fn selected_commit_file_abs_path(gui: &Gui) -> Option<String> {
+    let selected = gui.context_mgr.selected_active();
+    if gui.show_commit_file_tree {
+        let node = gui.commit_file_tree_nodes.get(selected)?;
+        if node.is_dir {
+            return selected_commit_dir_abs_path(gui);
+        }
+        let file_idx = node.file_index?;
+        let model = gui.model.lock().unwrap();
+        let file = model.commit_files.get(file_idx)?;
+        let rel = file.current_path().to_string();
+        drop(model);
+
+        let abs = gui.git.repo_path().join(&rel);
+        return Some(abs.to_string_lossy().to_string());
+    }
+
+    let model = gui.model.lock().unwrap();
+    let file = model.commit_files.get(selected)?;
+    let rel = file.current_path().to_string();
+    drop(model);
+
+    let abs = gui.git.repo_path().join(&rel);
+    Some(abs.to_string_lossy().to_string())
+}
+
+/// Absolute path of the selected directory node in commit-file tree view.
+fn selected_commit_dir_abs_path(gui: &Gui) -> Option<String> {
+    if !gui.show_commit_file_tree {
+        return None;
+    }
+    let selected = gui.context_mgr.selected_active();
+    let node = gui.commit_file_tree_nodes.get(selected)?;
+    if !node.is_dir {
+        return None;
+    }
+    if node.path == "." || node.path.is_empty() {
+        return Some(gui.git.repo_path().to_string_lossy().to_string());
+    }
+    Some(
+        gui.git
+            .repo_path()
+            .join(&node.path)
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
+fn open_selected_in_editor(gui: &mut Gui) -> Result<()> {
+    // Directories: open the folder in the editor.
+    if let Some(dir_abs) = selected_commit_dir_abs_path(gui) {
+        if let Ok(launch) = gui.config.user_config.os.plan_open_dir(&dir_abs) {
+            gui.launch_editor(launch)?;
+        }
+        return Ok(());
+    }
+    let Some(abs_path) = selected_commit_file_abs_path(gui) else {
+        return Ok(());
+    };
+    if let Ok(launch) = gui.config.user_config.os.plan_edit(&abs_path, None, None) {
+        gui.launch_editor(launch)?;
+    }
+    Ok(())
+}
+
+fn open_selected_in_default_program(gui: &mut Gui) -> Result<()> {
+    // Directories: open the folder with `os.open` (native file viewer by
+    // default), falling back to the platform opener.
+    if let Some(dir_abs) = selected_commit_dir_abs_path(gui) {
+        if let Ok(launch) = gui.config.user_config.os.plan_open(&dir_abs) {
+            gui.launch_editor(launch)?;
+        } else {
+            Platform::open_file(&dir_abs)?;
+        }
+        return Ok(());
+    }
+    let Some(abs_path) = selected_commit_file_abs_path(gui) else {
+        return Ok(());
+    };
+    if let Ok(launch) = gui.config.user_config.os.plan_open(&abs_path) {
+        gui.launch_editor(launch)?;
+    } else {
+        Platform::open_file(&abs_path)?;
+    }
     Ok(())
 }
 
@@ -89,6 +203,10 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     };
 
     let file_name = file.name.clone();
+    let old_path = file
+        .rename_paths()
+        .map_or_else(|| file.name.clone(), |(old, _)| old.to_string());
+    let new_path = file.current_path().to_string();
     let status = file.status;
     let hash = gui.commit_files_hash.clone();
     drop(model);
@@ -97,8 +215,8 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
         return Ok(());
     }
 
-    let path_for_old = file_name.clone();
-    let path_for_new = file_name.clone();
+    let path_for_old = old_path.clone();
+    let path_for_new = new_path.clone();
     let path_for_diff = file_name.clone();
     let hash_for_old = hash.clone();
     let hash_for_new = hash.clone();

@@ -9,10 +9,11 @@ use crate::gui::Gui;
 pub struct App {
     pub config: AppConfig,
     pub repo_path: PathBuf,
+    pub filter_path: Option<PathBuf>,
 }
 
 impl App {
-    pub fn new(repo_path: PathBuf, debug: bool) -> Result<Self> {
+    pub fn new(repo_path: PathBuf, debug: bool, filter_path: Option<PathBuf>) -> Result<Self> {
         let config = AppConfig::load(debug)?;
 
         // Validate git repo
@@ -20,7 +21,11 @@ impl App {
             anyhow::bail!("'{}' is not a git repository", repo_path.display());
         }
 
-        Ok(Self { config, repo_path })
+        Ok(Self {
+            config,
+            repo_path,
+            filter_path,
+        })
     }
 
     pub fn run(mut self) -> Result<()> {
@@ -31,7 +36,9 @@ impl App {
         self.config.app_state.add_recent_repo(&repo_str);
         let _ = self.config.save_state();
 
-        let mut gui = Gui::new(self.config, git)?;
+        // Pass `-f` into Gui::new so the initial model stream loads filtered
+        // commits immediately (no wait for full refresh + second git log).
+        let mut gui = Gui::new(self.config, git, self.filter_path)?;
         gui.run()?;
 
         Ok(())

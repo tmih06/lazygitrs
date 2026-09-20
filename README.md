@@ -19,10 +19,11 @@ The goal: everything lazygit does, but faster and with opinions I actually agree
 > - [gh](https://cli.github.com)
 
 ```sh
-npm install -g lazygitrs  # npm
-bun install -g lazygitrs  # or bun
-cargo binstall lazygitrs  # or cargo-binstall (prebuilt binary, faster)
-cargo install lazygitrs   # or cargo (build from source)
+brew install blankeos/tap/lazygitrs # Homebrew (macOS/Linux)
+npm install -g lazygitrs            # or npm
+bun install -g lazygitrs            # or bun
+cargo binstall lazygitrs            # or cargo-binstall (prebuilt binary, faster)
+cargo install lazygitrs             # or cargo (build from source)
 curl -sSL https://raw.githubusercontent.com/Blankeos/lazygitrs/main/install.sh | sh # or linux/macos (via curl)
 ```
 
@@ -30,6 +31,15 @@ Then run:
 
 ```sh
 lazygitrs
+```
+
+### Upgrade
+
+Detects how you installed (brew / npm / bun / cargo / install.sh) and upgrades in place:
+
+```sh
+lazygitrs upgrade          # latest
+lazygitrs upgrade 0.0.32   # specific version
 ```
 
 ### What's different
@@ -41,16 +51,16 @@ lazygitrs
   git:
     commit:
       # Using claude
-      generateCommand: "claude -p 'Generate a conventional commit message for this diff.' --no-session-persistence"
+      generateCommand: "claude -p 'Generate a conventional commit message for this diff. Do not hard-wrap lines; one bullet per line; blank line between paragraphs.' --no-session-persistence"
       # Using opencode
-      generateCommand: "opencode run 'Generate a conventional commit message for this diff.'"
+      generateCommand: "opencode run 'Generate a conventional commit message for this diff. Do not hard-wrap lines; one bullet per line; blank line between paragraphs.'"
       # Using codex
-      generateCommand: "codex exec --ephemeral 'Generate a conventional commit message for this diff.'"
+      generateCommand: "codex exec --ephemeral 'Generate a conventional commit message for this diff. Do not hard-wrap lines; one bullet per line; blank line between paragraphs.'"
       # Using modelcli
-      generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. $DIFF"'
+      generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. Do not hard-wrap lines; one bullet per line. $DIFF"'
   ```
 
-- [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
+- [x] **Side-by-side + unified diffs** with syntax highlighting by default and unified as well, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
 - [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters.
@@ -58,10 +68,11 @@ lazygitrs
 - [x] **Interactive rebasing** — inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
 - [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.
 - [x] **Command Palette** — easily access stuff like:
-  - [ ] `git reset` and then asks, what branch/commit, has quick search.
-  - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
-  - [x] `git rebase` and then asks rebase on top of what branch/commit.
+  - [x] `git reset` (global `G`) — asks which branch/commit, has quick search, then soft/mixed/hard options.
+  - [x] `git diff/compare` (global `W`) and then asks what branch/commit A and B, has quick search.
+  - [x] `git rebase` (global `I`) and then asks rebase on top of what branch/commit.
   - [x] 🎨 Themes + Theme-Picker!
+- [x] **Grep diff contents** — `Ctrl-F` in Files / Commit Files / Compare searches hunk lines in-context, `Enter` jumps to the file in the current list.
 
 ### Configuration
 
@@ -95,7 +106,62 @@ lazygitrs ships with 30+ built-in color themes (Catppuccin, Dracula, Tokyo Night
 }
 ```
 
-To refresh the built-in generated themes from OpenCode upstream: `bun run scripts/gen-themes.ts`
+### Editor integrations
+
+<details>
+<summary><strong>Helix</strong> — <code>Space G g</code> to open, <code>Space G f</code> for file history</summary>
+
+Add to `~/.config/helix/config.toml` — capital `G` keeps the built-in `space g` changed-file picker intact:
+
+```toml
+[keys.normal.space.G]
+g = [":insert-output lazygitrs", ":redraw"]
+f = [":insert-output lazygitrs -f '%{file_path_absolute}'", ":redraw"]
+```
+
+Absolute path matters — `-f` resolves it to repo-relative (e.g. `apps/nextjs/next.config.ts` in a monorepo).
+
+For `e` (edit back in hx) — `~/.config/lazygitrs/config.yml`:
+
+```yaml
+os:
+  editPreset: "helix"
+```
+
+For `o` (open), leave the default — OS opener (Finder for folders on macOS).
+
+</details>
+
+<details>
+<summary><strong>Neovim (LazyVim / snacks.nvim)</strong> — <code>&lt;leader&gt;gg</code> to open, <code>&lt;leader&gt;gF</code> for file history</summary>
+
+`Snacks.lazygit()` hardcodes `lazygit`, so use `Snacks.terminal` instead. In `~/.config/nvim/lua/plugins/snacks-lazygitrs.lua`:
+
+```lua
+return {
+  {
+    "folke/snacks.nvim",
+    opts = { lazygit = { configure = false } },
+    keys = {
+      { "<leader>gg", function() Snacks.terminal({ "lazygitrs" }, { cwd = LazyVim.root.git(), win = { style = "lazygit" } }) end, desc = "Lazygitrs" },
+      { "<leader>gF", function() Snacks.terminal({ "lazygitrs", "-f", vim.fn.expand("%:p") }, { cwd = LazyVim.root.git(), win = { style = "lazygit" } }) end, desc = "Lazygitrs file history" },
+    },
+  },
+}
+```
+
+Restart nvim (or `:Lazy reload snacks.nvim`) to pick it up.
+
+For `e` (edit back in nvim) — `~/.config/lazygitrs/config.yml`:
+
+```yaml
+os:
+  editPreset: "nvim"
+```
+
+For `o` (open), leave the default — it uses the OS opener (Finder for folders on macOS).
+
+</details>
 
 <!-- GEN_BENCHMARKS_START -->
 
