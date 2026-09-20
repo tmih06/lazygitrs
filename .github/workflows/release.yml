@@ -91,27 +91,23 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Stage artifact
         shell: bash
-        run: |
           set -euo pipefail
-          mkdir -p dist
           bin="target/${{ matrix.target }}/release/lazygitrs"
           [ -f "$bin.exe" ] && bin="$bin.exe"
-          cp "$bin" "dist/${{ matrix.asset }}"
-          chmod +x "dist/${{ matrix.asset }}" || true
-          cd dist
+          cp "$bin" "${{ matrix.asset }}"
+          chmod +x "${{ matrix.asset }}" || true
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${{ matrix.asset }}" >> ../checksums.txt
+            sha256sum "${{ matrix.asset }}" >> checksums.txt
           else
-            shasum -a 256 "${{ matrix.asset }}" >> ../checksums.txt
+            shasum -a 256 "${{ matrix.asset }}" >> checksums.txt
           fi
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.asset }}
           path: |
-            dist/${{ matrix.asset }}
+            ${{ matrix.asset }}
             checksums.txt
           retention-days: 1
-
   release:
     name: Publish release
     needs: [verify, build]
