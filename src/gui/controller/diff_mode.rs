@@ -820,7 +820,7 @@ fn show_diff_mode_command_palette(gui: &mut Gui) {
                     .keybinding
                     .universal
                     .toggle_diff_view_layout
-                    .clone(),
+                    .to_string(),
                 "Toggle unified / side-by-side view".into(),
             ),
             CommandEntry::keybinding("z".into(), "Toggle line wrap".into()),

@@ -3108,16 +3108,11 @@ impl Gui {
                 Some(entry) if !entry.is_dir => {
                     let path = entry.path.clone();
                     let git = Arc::clone(&self.git);
-                    let tx = self.diff_tx.clone();
-                    let gen_counter = Arc::clone(&self.diff_generation);
                     self.diff_loading = true;
                     self.diff_loading_since = Some(Instant::now());
-                    std::thread::spawn(move || {
-                        if gen_counter.load(Ordering::Relaxed) != generation {
-                            return;
-                        }
+                    self.queue_diff_job(generation, diff_key, move || {
                         let abs = git.repo_path().join(&path);
-                        let payload = match modes::file_explorer::read_file_for_view(&abs) {
+                        match modes::file_explorer::read_file_for_view(&abs) {
                             Some(content) => DiffPayload::FileView(DiffViewState::parse_content(
                                 &path, &content, &content, 4, true,
                             )),
@@ -3128,13 +3123,7 @@ impl Gui {
                                 4,
                                 true,
                             )),
-                        };
-                        let _ = tx.send(DiffResult {
-                            generation,
-                            diff_key,
-                            payload,
-                            is_prefetch: false,
-                        });
+                        }
                     });
                 }
                 _ => {
@@ -3382,18 +3371,13 @@ impl Gui {
                     drop(model);
 
                     let git = Arc::clone(&self.git);
-                    let tx = self.diff_tx.clone();
-                    let gen_counter = Arc::clone(&self.diff_generation);
 
                     self.diff_loading = true;
                     self.diff_loading_since = Some(Instant::now());
-                    std::thread::spawn(move || {
-                        if gen_counter.load(Ordering::Relaxed) != generation {
-                            return;
-                        }
+                    self.queue_diff_job(generation, diff_key, move || {
                         // The current branch has nothing to merge into itself, so
                         // fall back to the info blurb (Branch/Hash/Upstream).
-                        let payload = if is_head {
+                        if is_head {
                             DiffPayload::Empty
                         } else {
                             match git.diff_branch_against_head(&name) {
@@ -3405,13 +3389,7 @@ impl Gui {
                                 }
                                 _ => DiffPayload::Empty,
                             }
-                        };
-                        let _ = tx.send(DiffResult {
-                            generation,
-                            diff_key,
-                            payload,
-                            is_prefetch: false,
-                        });
+                        }
                     });
                 } else {
                     drop(model);
@@ -5810,20 +5788,35 @@ impl Gui {
             title: "Universal".into(),
             entries: vec![
                 CommandEntry::keybinding(kb.universal.quit.to_string(), "Quit".into()),
-                CommandEntry::keybinding(kb.universal.quit_alt1.clone(), "Quit (alt)".into()),
-                CommandEntry::keybinding(kb.universal.return_key.to_string(), "Return / Cancel".into()),
-                CommandEntry::keybinding(kb.universal.toggle_panel.to_string(), "Next panel".into()),
+                CommandEntry::keybinding(kb.universal.quit_alt1.to_string(), "Quit (alt)".into()),
+                CommandEntry::keybinding(
+                    kb.universal.return_key.to_string(),
+                    "Return / Cancel".into(),
+                ),
+                CommandEntry::keybinding(
+                    kb.universal.toggle_panel.to_string(),
+                    "Next panel".into(),
+                ),
                 CommandEntry::keybinding(
                     kb.universal.toggle_panel_reverse.to_string(),
                     "Previous panel".into(),
                 ),
-                CommandEntry::keybinding(kb.universal.prev_item.to_string(), "Previous item".into()),
+                CommandEntry::keybinding(
+                    kb.universal.prev_item.to_string(),
+                    "Previous item".into(),
+                ),
                 CommandEntry::keybinding(kb.universal.next_item.to_string(), "Next item".into()),
                 CommandEntry::keybinding(kb.universal.prev_page.to_string(), "Page up".into()),
                 CommandEntry::keybinding(kb.universal.next_page.to_string(), "Page down".into()),
                 CommandEntry::keybinding(kb.universal.goto_top.to_string(), "Go to top".into()),
-                CommandEntry::keybinding(kb.universal.goto_bottom.to_string(), "Go to bottom".into()),
-                CommandEntry::keybinding(kb.universal.prev_block.to_string(), "Previous panel".into()),
+                CommandEntry::keybinding(
+                    kb.universal.goto_bottom.to_string(),
+                    "Go to bottom".into(),
+                ),
+                CommandEntry::keybinding(
+                    kb.universal.prev_block.to_string(),
+                    "Previous panel".into(),
+                ),
                 CommandEntry::keybinding(kb.universal.next_block.to_string(), "Next panel".into()),
                 CommandEntry::keybinding(kb.universal.start_search.to_string(), "Search".into()),
                 CommandEntry::keybinding(
@@ -5835,15 +5828,21 @@ impl Gui {
                     "Previous search match".into(),
                 ),
                 CommandEntry::keybinding(
-                    kb.universal.scroll_up_main_alt1.clone(),
+                    kb.universal.scroll_up_main_alt1.to_string(),
                     "Scroll diff up".into(),
                 ),
                 CommandEntry::keybinding(
-                    kb.universal.scroll_down_main_alt1.clone(),
+                    kb.universal.scroll_down_main_alt1.to_string(),
                     "Scroll diff down".into(),
                 ),
-                CommandEntry::keybinding(kb.universal.scroll_left.to_string(), "Scroll left".into()),
-                CommandEntry::keybinding(kb.universal.scroll_right.to_string(), "Scroll right".into()),
+                CommandEntry::keybinding(
+                    kb.universal.scroll_left.to_string(),
+                    "Scroll left".into(),
+                ),
+                CommandEntry::keybinding(
+                    kb.universal.scroll_right.to_string(),
+                    "Scroll right".into(),
+                ),
                 CommandEntry::keybinding(kb.universal.undo.to_string(), "Undo".into()),
                 CommandEntry::keybinding(kb.universal.redo.to_string(), "Redo".into()),
                 CommandEntry::keybinding(kb.universal.refresh.to_string(), "Refresh".into()),
@@ -5925,9 +5924,15 @@ impl Gui {
                         "Toggle file explorer (browse all files)".into(),
                     ),
                     CommandEntry::keybinding(kb.files.fetch.to_string(), "Fetch".into()),
-                    CommandEntry::keybinding(kb.files.ignore_file.to_string(), "Ignore file".into()),
+                    CommandEntry::keybinding(
+                        kb.files.ignore_file.to_string(),
+                        "Ignore file".into(),
+                    ),
                     CommandEntry::keybinding("d".into(), "Discard changes".into()),
-                    CommandEntry::keybinding(kb.universal.edit.to_string(), "Open in editor".into()),
+                    CommandEntry::keybinding(
+                        kb.universal.edit.to_string(),
+                        "Open in editor".into(),
+                    ),
                     CommandEntry::keybinding(
                         kb.universal.open_file.to_string(),
                         "Open in default program".into(),
@@ -5980,7 +5985,10 @@ impl Gui {
                         kb.branches.merge_into_current_branch.to_string(),
                         "Merge into current".into(),
                     ),
-                    CommandEntry::keybinding(kb.branches.rebase_branch.to_string(), "Rebase".into()),
+                    CommandEntry::keybinding(
+                        kb.branches.rebase_branch.to_string(),
+                        "Rebase".into(),
+                    ),
                     CommandEntry::keybinding(
                         kb.branches.rename_branch.to_string(),
                         "Rename branch".into(),
@@ -6029,7 +6037,10 @@ impl Gui {
                         "Copy (cherry-pick)".into(),
                     ),
                     CommandEntry::keybinding("<enter>".into(), "View commit files".into()),
-                    CommandEntry::keybinding(kb.commits.squash_down.to_string(), "Squash down".into()),
+                    CommandEntry::keybinding(
+                        kb.commits.squash_down.to_string(),
+                        "Squash down".into(),
+                    ),
                     CommandEntry::keybinding(
                         kb.commits.rename_commit.to_string(),
                         "Reword commit".into(),
@@ -6075,7 +6086,10 @@ impl Gui {
                         kb.universal.toggle_diff_view_layout.to_string(),
                         "Toggle unified / side-by-side view".into(),
                     ),
-                    CommandEntry::keybinding(kb.commits.tag_commit.to_string(), "Tag commit".into()),
+                    CommandEntry::keybinding(
+                        kb.commits.tag_commit.to_string(),
+                        "Tag commit".into(),
+                    ),
                     CommandEntry::keybinding(
                         kb.commits.checkout_commit.to_string(),
                         "Checkout commit".into(),
@@ -6099,7 +6113,10 @@ impl Gui {
                 if !self.cherry_pick_clipboard.is_empty() {
                     entries.insert(
                         0,
-                        CommandEntry::keybinding(kb.commits.paste_commits.to_string(), "Paste (cherry-pick)".into()),
+                        CommandEntry::keybinding(
+                            kb.commits.paste_commits.to_string(),
+                            "Paste (cherry-pick)".into(),
+                        ),
                     );
                 }
                 CommandSection {
@@ -6114,7 +6131,10 @@ impl Gui {
                     CommandEntry::keybinding("<esc>".into(), "Back to commits".into()),
                     CommandEntry::keybinding("<c-f>".into(), "Grep diff contents".into()),
                     CommandEntry::keybinding(kb.universal.edit.to_string(), "Edit file".into()),
-                    CommandEntry::keybinding(kb.universal.open_file.to_string(), "Open file".into()),
+                    CommandEntry::keybinding(
+                        kb.universal.open_file.to_string(),
+                        "Open file".into(),
+                    ),
                     CommandEntry::keybinding(
                         kb.universal.toggle_diff_view_layout.to_string(),
                         "Toggle unified / side-by-side view".into(),
@@ -6161,7 +6181,10 @@ impl Gui {
                         "Toggle unified / side-by-side view".into(),
                     ),
                     CommandEntry::keybinding(kb.stash.pop_stash.to_string(), "Pop stash".into()),
-                    CommandEntry::keybinding(kb.stash.rename_stash.to_string(), "Rename stash".into()),
+                    CommandEntry::keybinding(
+                        kb.stash.rename_stash.to_string(),
+                        "Rename stash".into(),
+                    ),
                     CommandEntry::keybinding("d".into(), "Drop stash".into()),
                 ],
             },
@@ -6204,7 +6227,10 @@ impl Gui {
                         kb.branches.merge_into_current_branch.to_string(),
                         "Merge into current".into(),
                     ),
-                    CommandEntry::keybinding(kb.branches.rebase_branch.to_string(), "Rebase".into()),
+                    CommandEntry::keybinding(
+                        kb.branches.rebase_branch.to_string(),
+                        "Rebase".into(),
+                    ),
                     CommandEntry::keybinding("d".into(), "Delete remote branch".into()),
                     CommandEntry::keybinding("<esc>".into(), "Back to remotes".into()),
                 ],
@@ -6271,7 +6297,7 @@ impl Gui {
                     .keybinding
                     .universal
                     .toggle_diff_view_layout
-                    .clone(),
+                    .to_string(),
                 "Toggle unified / side-by-side view".into(),
             ),
             CommandEntry::keybinding("z".into(), "Toggle line wrap".into()),
@@ -8589,6 +8615,8 @@ impl Gui {
         if !is_rebasing && self.rebase_mode.in_progress_dismissed {
             self.rebase_mode.in_progress_dismissed = false;
         }
+
+        Ok(())
     }
 
     /// Lightweight refresh that only reloads files and diff stats.

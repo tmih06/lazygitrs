@@ -4,7 +4,6 @@ use tui_textarea::{CursorMove, TextArea};
 use unicode_width::UnicodeWidthChar;
 
 use super::Gui;
-use crate::config::keybindings::Key;
 
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'

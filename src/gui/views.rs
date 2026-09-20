@@ -4014,7 +4014,6 @@ fn find_commit_by_hash<'a>(model: &'a Model, hash: &str) -> Option<&'a Commit> {
         .or_else(|| model.reflog_commits.iter().find(|c| c.hash == hash))
 }
 
-
 fn render_commit_details_panel(
     frame: &mut Frame,
     rect: Rect,
@@ -4044,4 +4043,3 @@ fn render_commit_details_panel(
         scroll,
     );
 }
-
