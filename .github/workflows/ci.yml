@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref — pushes during a run kill the stale one.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  # Exercise the install scripts end-to-end against a fake local release:
+  # build the binary, lay out release assets, serve over HTTP, run the
+  # installer pointed at it via LAZYGITRS_BASE_URL.
+  installer-sh:
+    name: install.sh (Linux/macOS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      - name: Build binary + fake release
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          mkdir -p fake-release
+          cp target/release/lazygitrs fake-release/lazygitrs-linux-x86_64
+          (cd fake-release && sha256sum lazygitrs-linux-x86_64 > checksums.txt)
+      - name: Serve fake release + run installer
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8899 -d fake-release &>/dev/null &
+          sleep 1
+          export LAZYGITRS_BASE_URL="http://127.0.0.1:8899"
+          export INSTALL_DIR="$PWD/fake-bin"
+          sh install.sh
+          test -x "$INSTALL_DIR/lazygitrs"
+          "$INSTALL_DIR/lazygitrs" --version
+
+  installer-ps:
+    name: install.ps1 (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      - name: Build binary + fake release
+        shell: pwsh
+        run: |
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force -Path fake-release | Out-Null
+          Copy-Item target/release/lazygitrs.exe fake-release/lazygitrs-windows-x86_64.exe
+          $hash = (Get-FileHash fake-release/lazygitrs-windows-x86_64.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  lazygitrs-windows-x86_64.exe" | Out-File -Encoding ascii fake-release/checksums.txt
+      - name: Serve fake release + run installer
+        shell: pwsh
+        run: |
+          $env:LAZYGITRS_BASE_URL = "http://127.0.0.1:8899"
+          $env:INSTALL_DIR = "$PWD\fake-bin"
+          Start-Process python -ArgumentList "-m","http.server","8899" -WorkingDirectory fake-release
+          Start-Sleep -Seconds 2
+          .\install.ps1
+          if (-not (Test-Path "$env:INSTALL_DIR\lazygitrs.exe")) { throw "install failed" }
+          & "$env:INSTALL_DIR\lazygitrs.exe" --version
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      - name: cargo test
+        run: cargo test --locked --all-targets

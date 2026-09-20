@@ -218,7 +218,9 @@ pub struct OsConfig {
     #[serde(rename = "editAtLine")]
     pub edit_at_line: String,
     /// Command template to open a file at a specific line and wait for close.
+    /// Config surface kept for lazygit config compatibility; not yet consumed.
     #[serde(rename = "editAtLineAndWait")]
+    #[allow(dead_code)]
     pub edit_at_line_and_wait: String,
     /// Command template to open a file/URL in the default program.
     /// Uses `{{filename}}` as placeholder.
@@ -280,6 +282,7 @@ impl EditorLaunch {
 struct EditPreset {
     edit: &'static str,
     edit_at_line: &'static str,
+    #[allow(dead_code)]
     edit_at_line_and_wait: &'static str,
     open_dir_in_editor: &'static str,
     suspend: bool,

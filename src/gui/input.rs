@@ -183,25 +183,6 @@ fn next_events_interruptible(
     resolve_escape(source).map(Some)
 }
 
-/// Blocking read of the next logical event(s).
-fn next_events(source: &mut impl EventSource) -> io::Result<Vec<Event>> {
-    // A bare `Esc` is the only event that can be the head of a sequence that
-    // crossterm failed to keep together, so everything else passes straight
-    // through.
-    let first = loop {
-        if let Some(event) = source.next(Duration::from_secs(3600))? {
-            break event;
-        }
-    };
-    let Event::Key(key) = first else {
-        return Ok(vec![first]);
-    };
-    if key.code != KeyCode::Esc || key.kind != KeyEventKind::Press {
-        return Ok(vec![Event::Key(key)]);
-    }
-    resolve_escape(source)
-}
-
 /// Decide what a bare `Esc` actually was: a keypress, an `Alt`-modified key, or
 /// the start of a control sequence that arrived in pieces.
 fn resolve_escape(source: &mut impl EventSource) -> io::Result<Vec<Event>> {

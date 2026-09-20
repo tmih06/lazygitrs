@@ -13,21 +13,23 @@ The goal: everything lazygit does, but faster and with opinions I actually agree
 
 ### Install
 
-> Make sure you have:
->
-> - [git](https://git-scm.com)
-> - [gh](https://cli.github.com)
+> Requires [git](https://git-scm.com).
+
+**Linux / macOS:**
 
 ```sh
-brew install blankeos/tap/lazygitrs # Homebrew (macOS/Linux)
-npm install -g lazygitrs            # or npm
-bun install -g lazygitrs            # or bun
-cargo binstall lazygitrs            # or cargo-binstall (prebuilt binary, faster)
-cargo install lazygitrs             # or cargo (build from source)
-curl -sSL https://raw.githubusercontent.com/Blankeos/lazygitrs/main/install.sh | sh # or linux/macos (via curl)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tmih06/lazygitrs/releases/latest/download/lazygitrs-installer.sh | sh
 ```
 
-Then run:
+**Windows (PowerShell):**
+
+```powershell
+irm https://github.com/tmih06/lazygitrs/releases/latest/download/lazygitrs-installer.ps1 | iex
+```
+
+Installs the prebuilt binary for your platform (x86_64 / aarch64) to
+`~/.local/bin` (or `%LOCALAPPDATA%\Programs\lazygitrs` on Windows), verifying
+the release checksum. Then run:
 
 ```sh
 lazygitrs
@@ -35,11 +37,9 @@ lazygitrs
 
 ### Upgrade
 
-Detects how you installed (brew / npm / bun / cargo / install.sh) and upgrades in place:
-
 ```sh
 lazygitrs upgrade          # latest
-lazygitrs upgrade 0.0.32   # specific version
+lazygitrs upgrade 0.0.38   # specific version
 ```
 
 ### What's different

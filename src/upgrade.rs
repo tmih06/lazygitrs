@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-const GITHUB_REPO: &str = "Blankeos/lazygitrs";
+const GITHUB_REPO: &str = "tmih06/lazygitrs";
 const BREW_FORMULA: &str = "blankeos/tap/lazygitrs";
 const NPM_PACKAGE: &str = "lazygitrs";
 const BINARY_NAME: &str = "lazygitrs";
@@ -308,10 +308,7 @@ fn run_method_upgrade(method: &InstallMethod, target_version: &str) -> Result<()
         InstallMethod::Unknown { path } => {
             bail!(
                 "could not determine install method for `{}`.\n\
-                 Reinstall with one of:\n\
-                 • brew install {BREW_FORMULA}\n\
-                 • npm install -g {NPM_PACKAGE}\n\
-                 • cargo binstall {BINARY_NAME}\n\
+                 Reinstall with:\n\
                  • curl --proto '=https' --tlsv1.2 -LsSf https://github.com/{GITHUB_REPO}/releases/latest/download/{BINARY_NAME}-installer.sh | sh",
                 path.display()
             )
